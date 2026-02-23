@@ -1,4 +1,4 @@
-"""Model training, hyperparameter suggestion, and evaluation helpers."""
+﻿"""Model training, hyperparameter suggestion, and evaluation helpers."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ MODEL_DEFINITIONS: dict[str, dict[str, str]] = {
     "reg_pls": {"task": "regression", "label": "回帰: PLS回帰"},
     "reg_lgbm": {"task": "regression", "label": "回帰: LightGBM"},
     "reg_rf": {"task": "regression", "label": "回帰: ランダムフォレスト"},
-    "cls_logistic": {"task": "classification", "label": "分類: ロジスティクス回帰"},
+    "cls_logistic": {"task": "classification", "label": "分類: ロジスティック回帰"},
     "cls_lgbm": {"task": "classification", "label": "分類: LightGBM"},
     "cls_tree": {"task": "classification", "label": "分類: 決定木"},
     "cls_rf": {"task": "classification", "label": "分類: ランダムフォレスト"},
@@ -76,6 +76,44 @@ def format_param_text(params: dict[str, Any]) -> str:
     """Format hyperparameter dictionary for textarea display."""
     normalized = {key: _to_python_scalar(value) for key, value in params.items()}
     return json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def parse_param_grid_text(text: str | None) -> tuple[dict[str, list[Any]], str | None]:
+    """Parse user input JSON text for CV hyperparameter candidate grid."""
+    raw = (text or "").strip()
+    if not raw:
+        return {}, None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {}, f"ハイパーパラメータ候補JSONの解釈に失敗しました: {exc}"
+    if not isinstance(parsed, dict):
+        return {}, "ハイパーパラメータ候補は JSON オブジェクト（辞書）で指定してください。"
+
+    grid: dict[str, list[Any]] = {}
+    for key, value in parsed.items():
+        name = str(key)
+        if isinstance(value, list):
+            if not value:
+                return {}, f"ハイパーパラメータ候補 `{name}` の候補リストが空です。"
+            candidates = [_to_python_scalar(item) for item in value]
+        else:
+            candidates = [_to_python_scalar(value)]
+        grid[name] = candidates
+    return grid, None
+
+
+def format_param_grid_text(grid: dict[str, list[Any]]) -> str:
+    """Format CV hyperparameter candidate grid for textarea display."""
+    normalized: dict[str, list[Any]] = {}
+    for key, values in (grid or {}).items():
+        normalized[str(key)] = [_to_python_scalar(value) for value in (values or [])]
+    return json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def default_hyperparam_grid_text(model_key: str) -> str:
+    """Return default CV candidate grid text for a model."""
+    return format_param_grid_text(hyperparam_grid(model_key))
 
 
 def default_hyperparams(model_key: str) -> dict[str, Any]:
@@ -145,6 +183,7 @@ def suggest_hyperparameters(
     split_stratify_col: str | None,
     split_order_col: str | None,
     cv_folds: int,
+    candidate_grid: dict[str, list[Any]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Suggest hyperparameters from training data.
 
@@ -192,7 +231,7 @@ def suggest_hyperparameters(
 
     preprocessor = _build_feature_preprocessor(x_train)
     base_estimator = _build_estimator(model_key, {}, random_seed=prepared["random_seed"])
-    grid = hyperparam_grid(model_key)
+    grid = dict(candidate_grid) if candidate_grid is not None else hyperparam_grid(model_key)
     if not grid:
         params = default_hyperparams(model_key)
         return params, "このモデルには探索グリッドが未定義のため、既定値を提案します。"
@@ -1649,3 +1688,4 @@ def _to_python_scalar(value: Any) -> Any:
             return value.item()
         return value.tolist()
     return value
+

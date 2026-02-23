@@ -1,4 +1,4 @@
-# INSIGHTA
+﻿# INSIGHTA
 
 INSIGHTA は、データを多様なグラフで描画しながら GUI 上でサンプル（行）を選択し、特徴や差分を探索するためのブラウザ型 EDA / モデリング支援ツールです。  
 Plotly Dash を使ってローカルPCで動作します。
@@ -30,7 +30,7 @@ Plotly Dash を使ってローカルPCで動作します。
   - 学習データ基準の標準化
   - 教師なし: PCA / ICA
   - 回帰: 重回帰 / PLS回帰 / LightGBM / ランダムフォレスト回帰
-  - 分類: ロジスティクス回帰 / LightGBM / 決定木 / ランダムフォレスト
+  - 分類: ロジスティック回帰 / LightGBM / 決定木 / ランダムフォレスト
   - 学習データCVによるハイパーパラメータ推奨（最終値はユーザーが決定）
   - 学習済みモデルの保存 / 再読込（`joblib`）
 - 結果可視化
@@ -325,3 +325,4 @@ Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Fo
   - `lightgbm`, `shap` の収集
   - DBドライバ hidden import（`pyodbc`, `pymysql`, `psycopg2`, `oracledb`）
   - `console=False`（黒いコンソール非表示）
+

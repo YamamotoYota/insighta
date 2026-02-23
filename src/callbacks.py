@@ -32,11 +32,13 @@ from .preprocess import (
     normalize_type_overrides,
 )
 from .model_runner import (
+    default_hyperparam_grid_text,
     default_model_key,
     format_param_text,
     model_label,
     model_requires_target,
     model_task,
+    parse_param_grid_text,
     parse_param_text,
     run_model,
     suggest_hyperparameters,
@@ -1268,6 +1270,15 @@ def register_callbacks(app: Dash) -> None:
         )
 
     @app.callback(
+        Output("model-candidate-grid-text", "value"),
+        Input("model-method-dropdown", "value"),
+    )
+    def reset_model_candidate_grid_text(model_method: str | None) -> str:
+        """Load default CV candidate grid for the selected model."""
+        model_key = str(model_method or default_model_key())
+        return default_hyperparam_grid_text(model_key)
+
+    @app.callback(
         Output("model-params-text", "value"),
         Output("modeling-suggest-status", "children"),
         Input("model-suggest-button", "n_clicks"),
@@ -1279,6 +1290,7 @@ def register_callbacks(app: Dash) -> None:
         State("model-target-dropdown", "value"),
         State("model-features-dropdown", "value"),
         State("model-cv-fold-input", "value"),
+        State("model-candidate-grid-text", "value"),
         State("model-params-text", "value"),
         prevent_initial_call=True,
     )
@@ -1292,12 +1304,16 @@ def register_callbacks(app: Dash) -> None:
         target_col: str | None,
         feature_cols: list[str] | None,
         cv_folds: int | float | None,
+        candidate_grid_text: str | None,
         current_param_text: str | None,
     ) -> tuple[str | Any, str]:
         if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
             return no_update, "先にデータを読み込んでください。"
 
         model_key = str(model_method or default_model_key())
+        candidate_grid, candidate_grid_error = parse_param_grid_text(candidate_grid_text)
+        if candidate_grid_error:
+            return no_update, candidate_grid_error
         try:
             runtime_df = _prepare_modeling_runtime_dataframe(current_data, ui_config, selected_ids)
             if runtime_df.empty:
@@ -1315,6 +1331,7 @@ def register_callbacks(app: Dash) -> None:
                 split_stratify_col=(cfg.get("split_stratify_col") or None),
                 split_order_col=(cfg.get("split_order_col") or None),
                 cv_folds=int(cv_folds) if isinstance(cv_folds, (int, float)) else 5,
+                candidate_grid=candidate_grid,
             )
             return format_param_text(suggested), f"{model_label(model_key)} 推奨値: {summary}"
         except Exception as exc:

@@ -428,7 +428,7 @@ def create_layout(
                                             {"label": "回帰: PLS回帰", "value": "reg_pls"},
                                             {"label": "回帰: LightGBM", "value": "reg_lgbm"},
                                             {"label": "回帰: ランダムフォレスト", "value": "reg_rf"},
-                                            {"label": "分類: ロジスティクス回帰", "value": "cls_logistic"},
+                                            {"label": "分類: ロジスティック回帰", "value": "cls_logistic"},
                                             {"label": "分類: LightGBM", "value": "cls_lgbm"},
                                             {"label": "分類: 決定木", "value": "cls_tree"},
                                             {"label": "分類: ランダムフォレスト", "value": "cls_rf"},
@@ -475,6 +475,22 @@ def create_layout(
                         id="model-target-help",
                         children="教師なしモデルでは目的変数は使用しません。",
                         style={"marginTop": "6px", "color": "#444"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("CV探索用ハイパーパラメータ候補 (JSON / 値は配列)"),
+                            dcc.Textarea(
+                                id="model-candidate-grid-text",
+                                value="{}",
+                                style={"width": "100%", "height": "130px"},
+                                placeholder='例: {"n_estimators": [100, 300, 500], "max_depth": [null, 8, 12]}',
+                            ),
+                            html.Div(
+                                "モデル手法を切り替えると、そのモデルの既定候補に初期化されます。",
+                                style={"marginTop": "4px", "color": "#666", "fontSize": 12},
+                            ),
+                        ],
+                        style={"marginTop": "8px"},
                     ),
                     html.Div(
                         [
