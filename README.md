@@ -245,3 +245,83 @@ pytest -q
   - 既存のアプリを終了するか、ポートを変更して起動してください。
 - SHAP重要度が出ない
   - `shap` 未インストール、またはモデル/環境依存で計算失敗の可能性があります（メッセージ表示されます）。
+
+## 15. 配布版ビルド手順（開発者向け / PyInstaller）
+
+このアプリは Tkinter へ作り直さず、Dash（Webアプリ）のまま `PyInstaller` で `INSIGHTA.exe` 化しています。
+配布版はローカルPC上で `127.0.0.1:8050` のサーバーを起動し、既定ブラウザを自動で開く方式です。
+
+### 15.1 前提
+
+- Windows 64bit
+- Python 3.11 系
+- 依存関係インストール済み（`requirements.txt`）
+- `INSIGHTA.spec` が存在すること
+
+推奨（今回の実績）:
+- Miniforge / conda 環境 `insighta`
+
+### 15.2 PyInstaller のインストール
+
+```bash
+conda run -n insighta python -m pip install pyinstaller
+```
+
+### 15.3 ビルド実行（実際に使用したコマンド）
+
+```bash
+conda run -n insighta python -m PyInstaller --noconfirm --clean INSIGHTA.spec
+```
+
+出力先:
+- `dist/INSIGHTA.exe`
+
+### 15.4 配布用フォルダの更新
+
+配布用フォルダは `release/INSIGHTA` を使います（利用者向け）。
+
+- `release/INSIGHTA/INSIGHTA.exe`
+- `release/INSIGHTA/README.md`（配布専用README）
+
+ビルド後に `dist/INSIGHTA.exe` を `release/INSIGHTA/INSIGHTA.exe` にコピーして更新してください。
+
+例:
+
+```powershell
+Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Force
+```
+
+### 15.5 起動確認（推奨）
+
+```bash
+.\dist\INSIGHTA.exe
+```
+
+- 数秒待つと、既定ブラウザで `http://127.0.0.1:8050` が自動で開きます。
+- 開かない場合はブラウザで `http://127.0.0.1:8050` を手動で開いて確認してください。
+
+### 15.6 重要な注意点（ハマりやすい点）
+
+1. `INSIGHTA.exe` を起動したまま再ビルドしない
+- `dist/INSIGHTA.exe` または `release/INSIGHTA/INSIGHTA.exe` が起動中だと、PyInstaller が `PermissionError` で失敗します。
+- 再ビルド前に実行中の `INSIGHTA.exe` を終了してください。
+
+2. conda/miniforge 環境では DLL 同梱が重要
+- `INSIGHTA.spec` では conda 環境の `Library/bin` と `DLLs` から DLL を収集する設定にしています。
+- これが無いと `_ctypes` などの DLL ロードエラーで起動失敗することがあります。
+
+3. DB接続の実行時要件は別途必要な場合がある
+- 例: SQL Server の ODBC Driver（OS側）
+- `PyInstaller` で Python ライブラリを同梱しても、OS側ドライバは別途必要なことがあります。
+
+### 15.7 補足（このプロジェクトでのPyInstaller対応）
+
+- `app.py`
+  - frozen実行時の `assets` 解決（`sys._MEIPASS`）
+  - frozen実行時のブラウザ自動起動
+  - frozen実行時は `debug=False`
+- `INSIGHTA.spec`
+  - `assets/` と `data/` の同梱
+  - `lightgbm`, `shap` の収集
+  - DBドライバ hidden import（`pyodbc`, `pymysql`, `psycopg2`, `oracledb`）
+  - `console=False`（黒いコンソール非表示）
