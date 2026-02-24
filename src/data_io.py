@@ -1,4 +1,7 @@
-﻿"""Data loading and normalization utilities."""
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+"""Data loading and normalization utilities."""
 
 from __future__ import annotations
 

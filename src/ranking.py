@@ -1,4 +1,7 @@
-﻿"""Cause candidate ranking based on selected vs non-selected groups."""
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+"""Cause candidate ranking based on selected vs non-selected groups."""
 
 from __future__ import annotations
 

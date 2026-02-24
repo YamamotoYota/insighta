@@ -1,8 +1,13 @@
-﻿"""Model training, hyperparameter suggestion, and evaluation helpers."""
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+"""Model training, hyperparameter suggestion, and evaluation helpers."""
 
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import Any
 
 import numpy as np
@@ -31,6 +36,139 @@ MODEL_DEFINITIONS: dict[str, dict[str, str]] = {
 }
 
 DEFAULT_MODEL_KEY = "reg_linear"
+
+
+def _cv_n_jobs() -> int:
+    """Return stable GridSearchCV n_jobs setting for source/exe runs."""
+    env_value = str(os.environ.get("INSIGHTA_CV_N_JOBS", "")).strip()
+    if env_value:
+        try:
+            return int(env_value)
+        except ValueError:
+            pass
+    # PyInstaller onefile + joblib(loky) on Windows can spawn many INSIGHTA.exe workers.
+    # Prefer single-process CV in frozen mode for stability.
+    if bool(getattr(sys, "frozen", False)):
+        return 1
+    return -1
+
+
+def normalize_cv_search_method(value: str | None) -> str:
+    """Normalize CV search method string."""
+    token = str(value or "").strip().lower()
+    if token in {"random", "randomized", "random_search", "randomized_search"}:
+        return "randomized"
+    return "grid"
+
+
+def estimate_hyperparam_grid_combinations(grid: dict[str, list[Any]] | None) -> int:
+    """Estimate total combinations for a discrete candidate grid."""
+    if not grid:
+        return 0
+    total = 1
+    has_any = False
+    for values in grid.values():
+        if not isinstance(values, list) or len(values) == 0:
+            continue
+        total *= len(values)
+        has_any = True
+    return int(total if has_any else 0)
+
+
+def recommended_randomized_n_iter(
+    grid: dict[str, list[Any]] | None,
+    *,
+    default_n_iter: int = 20,
+) -> int:
+    """Return recommended n_iter for RandomizedSearchCV from a discrete grid."""
+    combos = estimate_hyperparam_grid_combinations(grid)
+    if combos <= 0:
+        return 0
+    return int(max(1, min(int(default_n_iter), combos)))
+
+
+def _normalize_cv_sample_ratio(value: float | int | None) -> float:
+    """Normalize CV sampling ratio for hyperparameter suggestion."""
+    try:
+        ratio = float(value) if value is not None else 1.0
+    except (TypeError, ValueError):
+        ratio = 1.0
+    return float(min(max(ratio, 0.05), 1.0))
+
+
+def _normalize_cv_sample_max_rows(value: int | float | None) -> int | None:
+    """Normalize CV sampling row cap for hyperparameter suggestion."""
+    if value is None:
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _compute_cv_sample_target_rows(
+    n_rows: int,
+    *,
+    sample_ratio: float | int | None,
+    sample_max_rows: int | float | None,
+) -> int:
+    """Compute target row count for CV suggestion sampling."""
+    if n_rows <= 0:
+        return 0
+    ratio = _normalize_cv_sample_ratio(sample_ratio)
+    max_rows = _normalize_cv_sample_max_rows(sample_max_rows)
+    target = n_rows
+    if ratio < 1.0:
+        target = max(2, int(np.floor(n_rows * ratio)))
+    if max_rows is not None:
+        target = min(target, max_rows)
+    return int(min(max(target, 2), n_rows))
+
+
+def _subsample_cv_training_data(
+    x_train: pd.DataFrame,
+    y_train: Any,
+    *,
+    task: str,
+    random_seed: int,
+    sample_ratio: float | int | None,
+    sample_max_rows: int | float | None,
+) -> tuple[pd.DataFrame, Any, int, int]:
+    """Subsample training data for CV suggestion (speed-up only)."""
+    n_before = int(len(x_train))
+    if n_before <= 0:
+        return x_train, y_train, 0, 0
+
+    target_n = _compute_cv_sample_target_rows(
+        n_before,
+        sample_ratio=sample_ratio,
+        sample_max_rows=sample_max_rows,
+    )
+    if target_n >= n_before:
+        return x_train, y_train, n_before, n_before
+
+    rng_seed = int(random_seed)
+    if task == "classification":
+        try:
+            from sklearn.model_selection import StratifiedShuffleSplit
+
+            y_series = pd.Series(y_train, index=x_train.index).astype(str)
+            if y_series.nunique(dropna=True) >= 2 and y_series.value_counts().min() >= 2:
+                splitter = StratifiedShuffleSplit(n_splits=1, train_size=target_n, random_state=rng_seed)
+                idx = next(splitter.split(np.zeros((n_before, 1)), y_series))[0]
+                picked_index = x_train.index[idx]
+                return x_train.loc[picked_index], y_series.loc[picked_index], n_before, target_n
+        except Exception:
+            pass
+
+    sampled_x = x_train.sample(n=target_n, random_state=rng_seed)
+    if isinstance(y_train, pd.Series):
+        sampled_y = y_train.loc[sampled_x.index]
+    else:
+        y_series = pd.Series(y_train, index=x_train.index)
+        sampled_y = y_series.loc[sampled_x.index]
+    return sampled_x, sampled_y, n_before, target_n
 
 
 def model_options() -> list[dict[str, str]]:
@@ -184,6 +322,9 @@ def suggest_hyperparameters(
     split_order_col: str | None,
     cv_folds: int,
     candidate_grid: dict[str, list[Any]] | None = None,
+    cv_search_method: str | None = "grid",
+    cv_sample_ratio: float | int | None = 1.0,
+    cv_sample_max_rows: int | float | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Suggest hyperparameters from training data.
 
@@ -192,6 +333,8 @@ def suggest_hyperparameters(
     """
     task = model_task(model_key)
     safe_cv = int(max(2, min(int(cv_folds), 10)))
+    cv_n_jobs = _cv_n_jobs()
+    search_method = normalize_cv_search_method(cv_search_method)
 
     if task == "unsupervised":
         prepared = _prepare_unsupervised_dataset(
@@ -235,55 +378,108 @@ def suggest_hyperparameters(
     if not grid:
         params = default_hyperparams(model_key)
         return params, "このモデルには探索グリッドが未定義のため、既定値を提案します。"
+    total_combos = estimate_hyperparam_grid_combinations(grid)
+
+    x_train_cv, y_train_cv, cv_rows_before, cv_rows_after = _subsample_cv_training_data(
+        x_train,
+        y_train,
+        task=task,
+        random_seed=prepared["random_seed"],
+        sample_ratio=cv_sample_ratio,
+        sample_max_rows=cv_sample_max_rows,
+    )
 
     if task == "regression":
-        y_train_arr = pd.to_numeric(y_train, errors="coerce").to_numpy()
+        y_train_arr = pd.to_numeric(y_train_cv, errors="coerce").to_numpy()
         wrapped = TransformedTargetRegressor(
             regressor=Pipeline([("prep", preprocessor), ("model", base_estimator)]),
             transformer=StandardScaler(),
         )
         grid_with_prefix = {f"regressor__model__{key}": values for key, values in grid.items()}
-        cv = KFold(n_splits=min(safe_cv, len(x_train)), shuffle=True, random_state=prepared["random_seed"])
-        search = GridSearchCV(
-            estimator=wrapped,
-            param_grid=grid_with_prefix,
-            scoring="neg_root_mean_squared_error",
-            cv=cv,
-            n_jobs=-1,
-            error_score="raise",
-        )
-        search.fit(x_train, y_train_arr)
+        cv = KFold(n_splits=min(safe_cv, len(x_train_cv)), shuffle=True, random_state=prepared["random_seed"])
+        if search_method == "randomized":
+            from sklearn.model_selection import RandomizedSearchCV
+
+            n_iter = recommended_randomized_n_iter(grid)
+            search = RandomizedSearchCV(
+                estimator=wrapped,
+                param_distributions=grid_with_prefix,
+                n_iter=n_iter,
+                scoring="neg_root_mean_squared_error",
+                cv=cv,
+                n_jobs=cv_n_jobs,
+                random_state=prepared["random_seed"],
+                error_score="raise",
+            )
+            search_label = f"RandomizedSearch (n_iter={n_iter}/{max(total_combos, n_iter)})"
+        else:
+            search = GridSearchCV(
+                estimator=wrapped,
+                param_grid=grid_with_prefix,
+                scoring="neg_root_mean_squared_error",
+                cv=cv,
+                n_jobs=cv_n_jobs,
+                error_score="raise",
+            )
+            search_label = f"GridSearch ({total_combos} combos)"
+        search.fit(x_train_cv, y_train_arr)
         best = {
             key.replace("regressor__model__", ""): _to_python_scalar(val)
             for key, val in search.best_params_.items()
         }
         best_rmse = -float(search.best_score_)
-        summary = f"CV完了: best RMSE={best_rmse:.6g} (fold={cv.get_n_splits()})"
+        summary = (
+            f"CV完了: best RMSE={best_rmse:.6g} "
+            f"({search_label}, fold={cv.get_n_splits()}, n_jobs={cv_n_jobs}, rows={cv_rows_after}/{cv_rows_before})"
+        )
         return best, summary
 
-    y_train_series = y_train.astype(str)
+    y_train_series = pd.Series(y_train_cv, index=x_train_cv.index).astype(str)
     class_count = y_train_series.nunique(dropna=True)
     if class_count < 2:
         return default_hyperparams(model_key), "学習データのクラスが1種類のみのためCVを実行できません。"
+    min_class_count = int(y_train_series.value_counts().min())
+    if min_class_count < 2:
+        return default_hyperparams(model_key), "学習データの各クラス件数が少なすぎるためCVを実行できません。候補用サンプル比率/上限行数を増やしてください。"
 
-    cv_splits = min(safe_cv, int(y_train_series.value_counts().min()))
+    cv_splits = min(safe_cv, min_class_count)
     cv_splits = max(2, cv_splits)
     cv = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=prepared["random_seed"])
     pipe = Pipeline([("prep", preprocessor), ("model", base_estimator)])
     grid_with_prefix = {f"model__{key}": values for key, values in grid.items()}
     scoring = "roc_auc_ovr" if class_count > 2 else "roc_auc"
-    search = GridSearchCV(
-        estimator=pipe,
-        param_grid=grid_with_prefix,
-        scoring=scoring,
-        cv=cv,
-        n_jobs=-1,
-        error_score="raise",
-    )
-    search.fit(x_train, y_train_series)
+    if search_method == "randomized":
+        from sklearn.model_selection import RandomizedSearchCV
+
+        n_iter = recommended_randomized_n_iter(grid)
+        search = RandomizedSearchCV(
+            estimator=pipe,
+            param_distributions=grid_with_prefix,
+            n_iter=n_iter,
+            scoring=scoring,
+            cv=cv,
+            n_jobs=cv_n_jobs,
+            random_state=prepared["random_seed"],
+            error_score="raise",
+        )
+        search_label = f"RandomizedSearch (n_iter={n_iter}/{max(total_combos, n_iter)})"
+    else:
+        search = GridSearchCV(
+            estimator=pipe,
+            param_grid=grid_with_prefix,
+            scoring=scoring,
+            cv=cv,
+            n_jobs=cv_n_jobs,
+            error_score="raise",
+        )
+        search_label = f"GridSearch ({total_combos} combos)"
+    search.fit(x_train_cv, y_train_series)
     best = {key.replace("model__", ""): _to_python_scalar(val) for key, val in search.best_params_.items()}
     best_score = float(search.best_score_)
-    summary = f"CV完了: best {scoring}={best_score:.6g} (fold={cv.get_n_splits()})"
+    summary = (
+        f"CV完了: best {scoring}={best_score:.6g} "
+        f"({search_label}, fold={cv.get_n_splits()}, n_jobs={cv_n_jobs}, rows={cv_rows_after}/{cv_rows_before})"
+    )
     return best, summary
 
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
 """Preprocessing helpers for user-driven dtype overrides and row filtering."""
 
 from __future__ import annotations

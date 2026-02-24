@@ -1,7 +1,11 @@
-﻿"""INSIGHTA Dash application entry point."""
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+"""INSIGHTA Dash application entry point."""
 
 from __future__ import annotations
 
+import multiprocessing
 import socket
 import sys
 import threading
@@ -81,12 +85,16 @@ def create_app() -> Dash:
     return app
 
 
-app = create_app()
+app: Dash | None = create_app() if __name__ != "__main__" else None
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
     host = "127.0.0.1"
     port = 8050
     debug_mode = not bool(getattr(sys, "frozen", False))
+    if app is None:
+        app = create_app()
     _start_browser_launcher_if_frozen(host=host, port=port)
     app.run(host=host, port=port, debug=debug_mode)

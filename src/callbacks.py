@@ -1,4 +1,7 @@
-﻿"""Dash callback registration."""
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+"""Dash callback registration."""
 
 from __future__ import annotations
 
@@ -34,12 +37,15 @@ from .preprocess import (
 from .model_runner import (
     default_hyperparam_grid_text,
     default_model_key,
+    estimate_hyperparam_grid_combinations,
     format_param_text,
     model_label,
     model_requires_target,
     model_task,
+    normalize_cv_search_method,
     parse_param_grid_text,
     parse_param_text,
+    recommended_randomized_n_iter,
     run_model,
     suggest_hyperparameters,
 )
@@ -1279,6 +1285,71 @@ def register_callbacks(app: Dash) -> None:
         return default_hyperparam_grid_text(model_key)
 
     @app.callback(
+        Output("model-cv-grid-estimate", "children"),
+        Input("model-method-dropdown", "value"),
+        Input("model-candidate-grid-text", "value"),
+        Input("model-cv-search-method-dropdown", "value"),
+        Input("model-cv-fold-input", "value"),
+        Input("model-cv-sample-ratio-input", "value"),
+        Input("model-cv-sample-maxrows-input", "value"),
+    )
+    def estimate_cv_candidate_workload(
+        model_method: str | None,
+        candidate_grid_text: str | None,
+        cv_search_method: str | None,
+        cv_folds: int | float | None,
+        cv_sample_ratio: float | int | None,
+        cv_sample_max_rows: int | float | None,
+    ) -> Any:
+        """Show candidate combination estimate and warning before CV suggestion."""
+        model_key = str(model_method or default_model_key())
+        if model_task(model_key) == "unsupervised":
+            return "教師なしモデルはCV探索を使わず、学習データのヒューリスティクスで推奨値を計算します。"
+
+        grid, err = parse_param_grid_text(candidate_grid_text)
+        if err:
+            return html.Span(f"候補JSONエラー: {err}", style={"color": "#b30000"})
+
+        combos = estimate_hyperparam_grid_combinations(grid)
+        folds = int(cv_folds) if isinstance(cv_folds, (int, float)) else 5
+        folds = max(2, min(folds, 10))
+        method = normalize_cv_search_method(cv_search_method)
+
+        if combos <= 0:
+            return html.Span("候補が空です。このモデルでは既定値提案になります。", style={"color": "#8a6d3b"})
+
+        if method == "randomized":
+            n_iter = recommended_randomized_n_iter(grid)
+            eval_count = max(1, n_iter)
+            method_text = f"RandomizedSearch: 候補組数={combos}, 試行数={n_iter}"
+        else:
+            eval_count = combos
+            method_text = f"GridSearch: 候補組数={combos}"
+        fit_count = eval_count * folds
+
+        notes: list[Any] = []
+        try:
+            ratio_val = float(cv_sample_ratio) if cv_sample_ratio is not None else 1.0
+        except (TypeError, ValueError):
+            ratio_val = 1.0
+        if ratio_val < 1.0:
+            notes.append(f"サンプル比率={ratio_val:.2f}")
+        if isinstance(cv_sample_max_rows, (int, float)) and int(cv_sample_max_rows) > 0:
+            notes.append(f"上限行数={int(cv_sample_max_rows)}")
+
+        if fit_count >= 1000:
+            warn = html.Span("警告: fit回数が多く、CV推奨に時間がかかる可能性があります。", style={"color": "#b30000"})
+        elif fit_count >= 300:
+            warn = html.Span("注意: fit回数が多めです。候補数やfold数の見直しを検討してください。", style={"color": "#8a6d3b"})
+        else:
+            warn = html.Span("推定負荷は比較的軽量です。", style={"color": "#2c662d"})
+
+        detail = f"{method_text} / fold={folds} / 推定fit回数={fit_count}"
+        if notes:
+            detail += " / " + ", ".join(notes)
+        return html.Div([html.Div(detail), html.Div(warn, style={"marginTop": "2px"})])
+
+    @app.callback(
         Output("model-params-text", "value"),
         Output("modeling-suggest-status", "children"),
         Input("model-suggest-button", "n_clicks"),
@@ -1290,6 +1361,9 @@ def register_callbacks(app: Dash) -> None:
         State("model-target-dropdown", "value"),
         State("model-features-dropdown", "value"),
         State("model-cv-fold-input", "value"),
+        State("model-cv-search-method-dropdown", "value"),
+        State("model-cv-sample-ratio-input", "value"),
+        State("model-cv-sample-maxrows-input", "value"),
         State("model-candidate-grid-text", "value"),
         State("model-params-text", "value"),
         prevent_initial_call=True,
@@ -1304,6 +1378,9 @@ def register_callbacks(app: Dash) -> None:
         target_col: str | None,
         feature_cols: list[str] | None,
         cv_folds: int | float | None,
+        cv_search_method: str | None,
+        cv_sample_ratio: float | int | None,
+        cv_sample_max_rows: int | float | None,
         candidate_grid_text: str | None,
         current_param_text: str | None,
     ) -> tuple[str | Any, str]:
@@ -1332,6 +1409,9 @@ def register_callbacks(app: Dash) -> None:
                 split_order_col=(cfg.get("split_order_col") or None),
                 cv_folds=int(cv_folds) if isinstance(cv_folds, (int, float)) else 5,
                 candidate_grid=candidate_grid,
+                cv_search_method=cv_search_method,
+                cv_sample_ratio=cv_sample_ratio,
+                cv_sample_max_rows=cv_sample_max_rows,
             )
             return format_param_text(suggested), f"{model_label(model_key)} 推奨値: {summary}"
         except Exception as exc:

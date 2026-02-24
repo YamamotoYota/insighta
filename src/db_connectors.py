@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
 """Generic SQL database access helpers via SQLAlchemy."""
 
 from __future__ import annotations

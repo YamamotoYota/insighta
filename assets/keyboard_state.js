@@ -1,4 +1,7 @@
-﻿(function () {
+// Copyright (c) 2026 Yota Yamamoto
+// SPDX-License-Identifier: MIT
+
+(function () {
   if (window.__insightaKeyboardInitialized__) {
     return;
   }

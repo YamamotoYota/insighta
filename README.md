@@ -1,9 +1,17 @@
-﻿# INSIGHTA
+﻿## License / ライセンス
+
+このリポジトリは MIT License で公開します。
+著作権者（Author / Copyright Holder）は **Yota Yamamoto** です。
+
+- ライセンス本文: `LICENSE`
+- SPDX: `MIT`
+
+# INSIGHTA
 
 INSIGHTA は、データを多様なグラフで描画しながら GUI 上でサンプル（行）を選択し、特徴や差分を探索するためのブラウザ型 EDA / モデリング支援ツールです。  
 Plotly Dash を使ってローカルPCで動作します。
 
-## 1. できること（概要）
+## 1. できること
 
 - データ読み込み
   - CSV (`.csv`)
@@ -40,7 +48,7 @@ Plotly Dash を使ってローカルPCで動作します。
 - 出力
   - 加工・分析後のデータテーブルを CSV / Excel 出力
 
-## 2. 画面の考え方（ざっくり）
+## 2. 画面の考え方
 
 - 上部: データ読み込み、グラフ設定表示、選択クリア
 - データテーブル: 常に分析対象データを確認（フィルタ/ソート/選択）
@@ -65,7 +73,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 4.2 Miniforge / conda の場合（推奨）
+### 4.2 Miniforge / conda の場合
 
 ```bash
 conda create -n insighta python=3.11 -y
@@ -87,7 +95,7 @@ python app.py
 
 - `http://127.0.0.1:8050`
 
-## 6. 基本的な使い方（最短手順）
+## 6. 基本的な使い方
 
 ### 6.1 ファイルから読み込む（CSV / Excel）
 
@@ -236,7 +244,7 @@ pytest -q
 - `src/figures.py` : EDAグラフ生成
 - `src/ranking.py` : 選択群 vs 非選択群の原因候補ランキング
 
-## 14. トラブルシュート（よくあるもの）
+## 14. トラブルシュート
 
 - Excel読込で `openpyxl` エラーが出る
   - 実行中の Python 環境に `openpyxl` が入っているか確認してください。
@@ -267,7 +275,7 @@ pytest -q
 conda run -n insighta python -m pip install pyinstaller
 ```
 
-### 15.3 ビルド実行（実際に使用したコマンド）
+### 15.3 ビルド実行
 
 ```bash
 conda run -n insighta python -m PyInstaller --noconfirm --clean INSIGHTA.spec
@@ -291,7 +299,7 @@ conda run -n insighta python -m PyInstaller --noconfirm --clean INSIGHTA.spec
 Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Force
 ```
 
-### 15.5 起動確認（推奨）
+### 15.5 起動確認
 
 ```bash
 .\dist\INSIGHTA.exe
@@ -300,7 +308,7 @@ Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Fo
 - 数秒待つと、既定ブラウザで `http://127.0.0.1:8050` が自動で開きます。
 - 開かない場合はブラウザで `http://127.0.0.1:8050` を手動で開いて確認してください。
 
-### 15.6 重要な注意点（ハマりやすい点）
+### 15.6 重要な注意点
 
 1. `INSIGHTA.exe` を起動したまま再ビルドしない
 - `dist/INSIGHTA.exe` または `release/INSIGHTA/INSIGHTA.exe` が起動中だと、PyInstaller が `PermissionError` で失敗します。
@@ -314,7 +322,7 @@ Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Fo
 - 例: SQL Server の ODBC Driver（OS側）
 - `PyInstaller` で Python ライブラリを同梱しても、OS側ドライバは別途必要なことがあります。
 
-### 15.7 補足（このプロジェクトでのPyInstaller対応）
+### 15.7 補足
 
 - `app.py`
   - frozen実行時の `assets` 解決（`sys._MEIPASS`）
@@ -325,4 +333,3 @@ Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Fo
   - `lightgbm`, `shap` の収集
   - DBドライバ hidden import（`pyodbc`, `pymysql`, `psycopg2`, `oracledb`）
   - `console=False`（黒いコンソール非表示）
-

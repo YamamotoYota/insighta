@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
 """State serialization for dcc.Store."""
 
 from __future__ import annotations

@@ -1,4 +1,7 @@
-﻿"""Dash layout definition."""
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+"""Dash layout definition."""
 
 from __future__ import annotations
 
@@ -461,6 +464,21 @@ def create_layout(
                                 ],
                                 style={"width": "140px"},
                             ),
+                            html.Div(
+                                [
+                                    html.Label("CV探索方式"),
+                                    dcc.Dropdown(
+                                        id="model-cv-search-method-dropdown",
+                                        options=[
+                                            {"label": "Grid Search", "value": "grid"},
+                                            {"label": "Randomized Search", "value": "randomized"},
+                                        ],
+                                        value="grid",
+                                        clearable=False,
+                                    ),
+                                ],
+                                style={"minWidth": "220px", "flex": "1"},
+                            ),
                         ],
                         style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginTop": "8px"},
                     ),
@@ -478,6 +496,41 @@ def create_layout(
                     ),
                     html.Div(
                         [
+                            html.Div(
+                                [
+                                    html.Label("CV推奨用サンプル比率"),
+                                    dcc.Input(
+                                        id="model-cv-sample-ratio-input",
+                                        type="number",
+                                        min=0.05,
+                                        max=1.0,
+                                        step=0.05,
+                                        value=1.0,
+                                        style={"width": "120px"},
+                                    ),
+                                ],
+                                style={"width": "180px"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("CV推奨用上限行数"),
+                                    dcc.Input(
+                                        id="model-cv-sample-maxrows-input",
+                                        type="number",
+                                        min=1,
+                                        step=1,
+                                        value=None,
+                                        placeholder="未指定=上限なし",
+                                        style={"width": "180px"},
+                                    ),
+                                ],
+                                style={"width": "220px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
                             html.Label("CV探索用ハイパーパラメータ候補 (JSON / 値は配列)"),
                             dcc.Textarea(
                                 id="model-candidate-grid-text",
@@ -492,6 +545,7 @@ def create_layout(
                         ],
                         style={"marginTop": "8px"},
                     ),
+                    html.Div(id="model-cv-grid-estimate", style={"marginTop": "6px", "color": "#444"}),
                     html.Div(
                         [
                             html.Button(

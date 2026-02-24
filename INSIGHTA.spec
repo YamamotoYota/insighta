@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
 import sys
 from pathlib import Path
 
