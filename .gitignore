@@ -1,0 +1,74 @@
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments / local Python setup
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Test / lint / type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+*.code-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs / temp files
+*.log
+logs/
+tmp/
+temp/
+
+# PyInstaller build outputs
+build/
+dist/
+
+# Distribution artifacts (keep release README, ignore binaries/archives)
+release/INSIGHTA/INSIGHTA.exe
+release/*.zip
+release/**/*.zip
+
+# Runtime model save artifacts / exported data (generated locally)
+*.joblib
+*.pkl
+*.pickle
+exports/
+output/
+outputs/
+
+# Local databases and temporary data files
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Secrets / local configuration
+.env
+.env.*
+*.env
+secrets/
+config.local.*
