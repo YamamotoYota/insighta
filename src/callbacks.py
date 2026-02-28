@@ -59,6 +59,7 @@ from .db_connectors import (
     normalize_dbms,
     normalize_port,
 )
+from .pi_af_sdk import PIDataError, build_pi_query_config, fetch_pi_datalink_table
 from .ranking import RANKING_COLUMNS, rank_candidate_causes
 from .state import (
     build_current_data_state,
@@ -828,19 +829,51 @@ def register_callbacks(app: Dash) -> None:
         Output("selected-ids-store", "data", allow_duplicate=True),
         Input("upload-data", "contents"),
         Input("sql-run-query-button", "n_clicks"),
+        Input("pi-run-query-button", "n_clicks"),
         State("upload-data", "filename"),
         State("app-run-store", "data"),
         State("sql-connection-store", "data"),
         State("sql-query-text", "value"),
+        State("pi-data-source-dropdown", "value"),
+        State("pi-server-input", "value"),
+        State("pi-af-server-input", "value"),
+        State("pi-af-database-input", "value"),
+        State("pi-query-type-dropdown", "value"),
+        State("pi-tags-text", "value"),
+        State("pi-af-element-input", "value"),
+        State("pi-af-attributes-text", "value"),
+        State("pi-start-time-input", "value"),
+        State("pi-end-time-input", "value"),
+        State("pi-interval-input", "value"),
+        State("pi-summary-functions-check", "value"),
+        State("pi-max-rows-input", "value"),
+        State("pi-ef-template-input", "value"),
+        State("pi-ef-analyses-text", "value"),
         prevent_initial_call=True,
     )
     def load_dataset(
         upload_contents: str | None,
         _sql_run_clicks: int | None,
+        _pi_run_clicks: int | None,
         upload_filename: str | None,
         app_run_data: dict[str, Any] | None,
         sql_state: dict[str, Any] | None,
         sql_query: str | None,
+        pi_data_source: str | None,
+        pi_server: str | None,
+        pi_af_server: str | None,
+        pi_af_database: str | None,
+        pi_query_type: str | None,
+        pi_tags_text: str | None,
+        pi_af_element: str | None,
+        pi_af_attributes_text: str | None,
+        pi_start_time: str | None,
+        pi_end_time: str | None,
+        pi_interval: str | None,
+        pi_summary_functions: list[str] | None,
+        pi_max_rows: int | float | str | None,
+        pi_ef_template: str | None,
+        pi_ef_analyses_text: str | None,
     ) -> tuple[dict[str, Any] | Any, str, list[str] | Any]:
         trigger = callback_context.triggered_id
         app_run_id = str((app_run_data or {}).get("app_run_id") or "")
@@ -877,6 +910,46 @@ def register_callbacks(app: Dash) -> None:
                 return current_data, f"SQL結果を読み込みました: {len(df)} 行", []
             except (DatabaseError, DataLoadError) as exc:
                 return no_update, f"SQL実行に失敗しました: {exc}", no_update
+
+        if trigger == "pi-run-query-button":
+            try:
+                pi_config = build_pi_query_config(
+                    data_source=pi_data_source,
+                    pi_server=pi_server,
+                    af_server=pi_af_server,
+                    af_database=pi_af_database,
+                    query_type=pi_query_type,
+                    tags_text=pi_tags_text,
+                    af_element=pi_af_element,
+                    af_attributes_text=pi_af_attributes_text,
+                    start_time=pi_start_time,
+                    end_time=pi_end_time,
+                    interval=pi_interval,
+                    summary_functions=pi_summary_functions,
+                    max_rows_per_tag=pi_max_rows,
+                    ef_template=pi_ef_template,
+                    ef_analyses_text=pi_ef_analyses_text,
+                )
+                df = prepare_dataframe(fetch_pi_datalink_table(pi_config))
+                if pi_config.data_source == "pi_da_tag":
+                    server_label = pi_config.pi_server or "default"
+                    source_name = f"PI DA: {server_label} / {pi_config.query_type}"
+                elif pi_config.data_source == "af_attribute":
+                    af_server_label = pi_config.af_server or "default"
+                    source_name = (
+                        f"PI AF属性: {af_server_label}/{pi_config.af_database} "
+                        f"element={pi_config.af_element} / {pi_config.query_type}"
+                    )
+                else:
+                    af_server_label = pi_config.af_server or "default"
+                    source_name = (
+                        f"PI EF: {af_server_label}/{pi_config.af_database} "
+                        f"template={pi_config.ef_template}"
+                    )
+                current_data = build_current_data_state(df, source_name, app_run_id=app_run_id)
+                return current_data, f"PIデータを読み込みました: {len(df)} 行", []
+            except (PIDataError, DataLoadError) as exc:
+                return no_update, f"PIデータ読み込みに失敗しました: {exc}", no_update
 
         return no_update, "データ読み込み操作が実行されませんでした。", no_update
 
@@ -1944,3 +2017,5 @@ def register_callbacks(app: Dash) -> None:
             _graph_card_style(matrix_visible, "420px"),
             graph_window_message,
         )
+
+

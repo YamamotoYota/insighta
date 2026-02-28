@@ -257,6 +257,181 @@ def create_layout(
             ),
             html.Details(
                 [
+                    html.Summary("PI（AF SDK）から読み込む"),
+                    html.Div(
+                        [
+                            dcc.Dropdown(
+                                id="pi-data-source-dropdown",
+                                options=[
+                                    {"label": "PI DAタグ", "value": "pi_da_tag"},
+                                    {"label": "PI AF属性", "value": "af_attribute"},
+                                    {"label": "PI AFイベントフレーム", "value": "af_event_frame"},
+                                ],
+                                value="pi_da_tag",
+                                clearable=False,
+                                style={"width": "220px"},
+                            ),
+                            dcc.Input(
+                                id="pi-server-input",
+                                type="text",
+                                placeholder="PI Data Archiveサーバー名（空欄なら既定）",
+                                style={"width": "320px"},
+                            ),
+                            dcc.Input(
+                                id="pi-af-server-input",
+                                type="text",
+                                placeholder="AFサーバー名（空欄なら既定）",
+                                style={"width": "260px"},
+                            ),
+                            dcc.Input(
+                                id="pi-af-database-input",
+                                type="text",
+                                placeholder="AFデータベース名",
+                                style={"width": "240px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "10px"},
+                    ),
+                    html.Div(
+                        [
+                            dcc.Dropdown(
+                                id="pi-query-type-dropdown",
+                                options=[
+                                    {"label": "Snapshot（現在値）", "value": "snapshot"},
+                                    {"label": "Recorded（記録値）", "value": "recorded"},
+                                    {"label": "Interpolated（補間値）", "value": "interpolated"},
+                                    {"label": "Summary（集計）", "value": "summary"},
+                                ],
+                                value="recorded",
+                                clearable=False,
+                                style={"width": "260px"},
+                            ),
+                            dcc.Input(
+                                id="pi-max-rows-input",
+                                type="number",
+                                min=1,
+                                max=500000,
+                                step=1,
+                                value=10000,
+                                placeholder="対象ごとの最大行数",
+                                style={"width": "180px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            dcc.Input(
+                                id="pi-start-time-input",
+                                type="text",
+                                value="*-1d",
+                                placeholder="開始時刻（例: *-1d, 2026-01-01 00:00:00）",
+                                style={"width": "280px"},
+                            ),
+                            dcc.Input(
+                                id="pi-end-time-input",
+                                type="text",
+                                value="*",
+                                placeholder="終了時刻（例: *）",
+                                style={"width": "220px"},
+                            ),
+                            dcc.Input(
+                                id="pi-interval-input",
+                                type="text",
+                                value="1h",
+                                placeholder="間隔（Snapshot以外で使用, 例: 10m, 1h）",
+                                style={"width": "280px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("Summary関数", style={"marginRight": "6px"}),
+                            dcc.Checklist(
+                                id="pi-summary-functions-check",
+                                options=[
+                                    {"label": "Average", "value": "average"},
+                                    {"label": "Min", "value": "min"},
+                                    {"label": "Max", "value": "max"},
+                                    {"label": "Sum", "value": "sum"},
+                                    {"label": "Count", "value": "count"},
+                                    {"label": "Std", "value": "std"},
+                                ],
+                                value=["average", "min", "max"],
+                                inline=True,
+                            ),
+                        ],
+                        style={"display": "flex", "alignItems": "center", "gap": "6px", "marginTop": "8px", "flexWrap": "wrap"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("PIタグ一覧（PI DAタグ用）"),
+                            dcc.Textarea(
+                                id="pi-tags-text",
+                                value="",
+                                placeholder="例: sinusoid\ncdt158\nTAG_A, TAG_B",
+                                style={"width": "100%", "height": "90px", "marginTop": "6px"},
+                            ),
+                        ],
+                        style={"marginTop": "6px"},
+                    ),
+                    html.Div(
+                        [
+                            dcc.Input(
+                                id="pi-af-element-input",
+                                type="text",
+                                placeholder="AFエレメント名（AF属性用）",
+                                style={"width": "320px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("AF属性名一覧（AF属性用）"),
+                            dcc.Textarea(
+                                id="pi-af-attributes-text",
+                                value="",
+                                placeholder="例: Temperature\nPressure\nFlowRate",
+                                style={"width": "100%", "height": "90px", "marginTop": "6px"},
+                            ),
+                        ],
+                        style={"marginTop": "6px"},
+                    ),
+                    html.Div(
+                        [
+                            dcc.Input(
+                                id="pi-ef-template-input",
+                                type="text",
+                                placeholder="イベントフレームテンプレート名（AFイベントフレーム用）",
+                                style={"width": "380px"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("イベント生成分析名一覧（AFイベントフレーム用）"),
+                            dcc.Textarea(
+                                id="pi-ef-analyses-text",
+                                value="",
+                                placeholder="例: BatchStartAnalysis\nQualityCheckAnalysis",
+                                style={"width": "100%", "height": "80px", "marginTop": "6px"},
+                            ),
+                        ],
+                        style={"marginTop": "6px"},
+                    ),
+                    html.Button("PIデータを読み込み", id="pi-run-query-button", n_clicks=0, style={"marginTop": "8px"}),
+                    html.Div(
+                        "※ PI AF SDK（AF Client）と pythonnet が必要です。PI AF属性はPI DAタグと同様の行形式で返します。",
+                        style={"marginTop": "6px", "color": "#555"},
+                    ),
+                ],
+                style={"marginBottom": "12px"},
+            ),
+            html.Details(
+                [
                     html.Summary("分析前処理の設定"),
                     dcc.Checklist(
                         id="analysis-options-check",

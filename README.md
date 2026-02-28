@@ -1,4 +1,4 @@
-﻿## License / ライセンス
+## License / ライセンス
 
 このリポジトリは MIT License で公開します。
 著作権者（Author / Copyright Holder）は **Yota Yamamoto** です。
@@ -22,6 +22,10 @@ Plotly Dash を使ってローカルPCで動作します。
     - SQLite
     - Oracle Database
     - PostgreSQL
+  - PI AF SDK（PI DataLink相当）
+    - PI DAタグ（Snapshot / Recorded / Interpolated / Summary）
+    - PI AF属性データ（エレメント名 + 属性名で取得。PI DAタグ同様の行形式）
+    - PI AFイベントフレーム（テンプレート + 対象期間 + イベント生成分析で取得）
 - EDA（対話的可視化）
   - 散布図 / ヒストグラム / 箱ひげ図 / 散布図行列
   - データテーブル（フィルタ・ソート・複数行選択）
@@ -112,7 +116,33 @@ python app.py
 5. `SELECT文を作成`
 6. 必要なら SQL を編集して `SQLを実行して読み込み`
 
-### 6.3 EDA（グラフ選択）
+
+### 6.3 PI（AF SDK）から読み込む
+
+1. `PI（AF SDK）から読み込む` を開く
+2. `取得対象` を選択
+   - `PI DAタグ`
+   - `PI AF属性`
+   - `PI AFイベントフレーム`
+3. 共通項目を入力
+   - `PI Data Archiveサーバー名`（PI DAタグ時）
+   - `AFサーバー名` / `AFデータベース名`（AF系時）
+   - 開始時刻 / 終了時刻
+4. 取得対象ごとの必須項目を入力
+   - PI DAタグ: `PIタグ一覧`
+   - PI AF属性: `AFエレメント名` + `AF属性名一覧`
+   - PI AFイベントフレーム: `イベントフレームテンプレート名` + `イベント生成分析名一覧`
+5. `PIデータを読み込み` を押す
+
+時刻指定の例:
+- `*-1d`（現在から1日前）
+- `*`（現在）
+- `2026-01-01 00:00:00`
+
+補足:
+- PI AF属性は、PI DAタグと同様の行形式（`tag`, `timestamp`, `value` など）で取得されます。
+- PI AFイベントフレームは、テンプレート・期間・分析名で絞り込んだイベント行として取得されます。
+### 6.4 EDA（グラフ選択）
 
 1. `グラフ設定を表示` を押す
 2. 必要なグラフ種別にチェックを入れる
@@ -200,7 +230,7 @@ INSIGHTA では、モデルに応じて以下の重要度を表示します。
 
 出力対象は「現在データテーブルに表示されているデータ（加工後）」です。
 
-## 11. SQL/DB 利用時の注意
+## 11. SQL/DB と PI 利用時の注意
 
 DBMSごとに追加ライブラリ/ドライバが必要です（`requirements.txt` に含めていますが、環境側のDBドライバ設定が必要な場合があります）。
 
@@ -215,6 +245,20 @@ DBMSごとに追加ライブラリ/ドライバが必要です（`requirements.t
   - `oracledb`
 - SQLite
   - Python標準の `sqlite3` を使用（SQLite DB ファイルパスを指定）
+
+
+PI AF SDK（PI DataLink相当）を使う場合の前提:
+- Windows + PI AF Client（PI System Explorer）導入済み
+- `OSIsoft.AFSDK` が参照可能
+- Python側: `pythonnet`
+
+PI/AF接続で失敗する場合の確認ポイント:
+- PI Data Archive サーバー名（または既定サーバー設定）
+- AFサーバー名 / AFデータベース名
+- PIタグ名、AFエレメント名、AF属性名の存在
+- イベントフレームテンプレート名、イベント生成分析名の存在
+- 時間指定（`*-1d` / `*` / 固定時刻文字列）の書式
+- クライアントPCのAF SDKインストール状態
 
 接続できない場合の確認ポイント:
 - ホスト名 / ポート番号
@@ -237,7 +281,7 @@ pytest -q
 - `src/layout.py` : 画面レイアウト
 - `src/callbacks.py` : Dashコールバック
 - `src/data_io.py` : CSV/Excel 読み込み
-- `src/db_connectors.py` : 複数DBMS接続
+- `src/db_connectors.py` : 複数DBMS接続`n- `src/pi_af_sdk.py` : PI DA / PI AF（属性・イベントフレーム）取得
 - `src/preprocess.py` : 列型変更・欠損/外れ値扱い
 - `src/modeling.py` : 分割/標準化/ラグ/特徴量追加
 - `src/model_runner.py` : モデル学習・CV推奨・評価・重要度
@@ -331,5 +375,47 @@ Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Fo
 - `INSIGHTA.spec`
   - `assets/` と `data/` の同梱
   - `lightgbm`, `shap` の収集
-  - DBドライバ hidden import（`pyodbc`, `pymysql`, `psycopg2`, `oracledb`）
+  - DBドライバ/PI連携 hidden import（`pyodbc`, `pymysql`, `psycopg2`, `oracledb`, `pythonnet`, `clr_loader`）
   - `console=False`（黒いコンソール非表示）
+
+
+
+
+
+## 16. GitHub同期（`release/INSIGHTA/INSIGHTA.exe`）
+
+`release/INSIGHTA/INSIGHTA.exe` は約 156MB です。  
+GitHub の通常 Git には **100MB のハード上限** があるため、通常コミットでは push できません。
+
+このため、本リポジトリでは `INSIGHTA.exe` を Git LFS で管理する前提です（`.gitattributes` 設定済み）。
+
+### 16.1 初回セットアップ（開発PCごと）
+
+```bash
+git lfs install
+```
+
+### 16.2 追跡設定（確認）
+
+```bash
+git lfs track "release/INSIGHTA/INSIGHTA.exe"
+```
+
+補足:
+- 本リポジトリには `.gitattributes` で同設定を追加済みです。
+
+### 16.3 ビルド後に同期する手順
+
+```bash
+git add .gitattributes release/INSIGHTA/INSIGHTA.exe
+git commit -m "Update INSIGHTA.exe"
+git push
+```
+
+### 16.4 注意点
+
+- Git LFS のストレージ容量・転送量には上限があります（利用プラン依存）。
+- 容量/転送制限を避ける場合は、実行ファイルは GitHub Releases に添付する運用が現実的です。
+
+
+

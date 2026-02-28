@@ -1,0 +1,5 @@
+# Copyright (c) 2026 Yota Yamamoto
+# SPDX-License-Identifier: MIT
+
+# Store Windows executable via Git LFS (normal Git has 100MB hard limit).
+release/INSIGHTA/INSIGHTA.exe filter=lfs diff=lfs merge=lfs -text
