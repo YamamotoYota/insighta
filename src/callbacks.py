@@ -59,7 +59,7 @@ from .db_connectors import (
     normalize_dbms,
     normalize_port,
 )
-from .pi_af_sdk import PIDataError, build_pi_query_config, fetch_pi_datalink_table
+from .pi_af_sdk import PIDataError, build_pi_query_config, fetch_pi_datalink_table, normalize_pi_data_source
 from .ranking import RANKING_COLUMNS, rank_candidate_causes
 from .state import (
     build_current_data_state,
@@ -747,6 +747,56 @@ def register_callbacks(app: Dash) -> None:
 
         _schedule_server_shutdown(shutdown_callable)
         return "アプリを終了しています... ブラウザを閉じてください。", True
+
+    @app.callback(
+        Output("pi-da-server-block", "style"),
+        Output("pi-af-server-db-block", "style"),
+        Output("pi-query-type-block", "style"),
+        Output("pi-max-rows-block", "style"),
+        Output("pi-time-range-block", "style"),
+        Output("pi-interval-block", "style"),
+        Output("pi-summary-settings-block", "style"),
+        Output("pi-tags-block", "style"),
+        Output("pi-af-attribute-target-block", "style"),
+        Output("pi-ef-target-block", "style"),
+        Input("pi-data-source-dropdown", "value"),
+    )
+    def update_pi_input_visibility(data_source: str | None) -> tuple[dict[str, Any], ...]:
+        """Show/hide PI input blocks by selected data source."""
+        source = normalize_pi_data_source(data_source)
+
+        def flex(show: bool, margin_top: str = "8px") -> dict[str, Any]:
+            if not show:
+                return {"display": "none"}
+            return {
+                "display": "flex",
+                "gap": "8px",
+                "alignItems": "center",
+                "flexWrap": "wrap",
+                "marginTop": margin_top,
+            }
+
+        def block(show: bool, margin_top: str = "8px") -> dict[str, Any]:
+            if not show:
+                return {"display": "none"}
+            return {"display": "block", "marginTop": margin_top}
+
+        is_da = source == "pi_da_tag"
+        is_af_attr = source == "af_attribute"
+        is_ef = source == "af_event_frame"
+
+        return (
+            flex(is_da),
+            flex(is_af_attr or is_ef),
+            flex(is_da or is_af_attr),
+            flex(True),
+            flex(True),
+            flex(is_da or is_af_attr),
+            flex(is_da or is_af_attr),
+            block(is_da, margin_top="6px"),
+            block(is_af_attr),
+            block(is_ef),
+        )
 
     @app.callback(
         Output("sql-connection-store", "data"),
@@ -2017,5 +2067,6 @@ def register_callbacks(app: Dash) -> None:
             _graph_card_style(matrix_visible, "420px"),
             graph_window_message,
         )
+
 
 

@@ -26,7 +26,7 @@ def _build_initial_state(app_run_id: str) -> tuple[dict, dict, dict, str]:
     current_data = build_empty_data_state(app_run_id=app_run_id)
     ui_config = build_default_ui_config(current_data["metadata"])
     view_config = build_default_view_config(current_data["metadata"])
-    status_message = "CSV/Excelをアップロード、またはSQL Serverから読み込んでください。"
+    status_message = "CSV/Excelアップロード、SQL、またはPI（AF SDK）からデータを読み込んでください。"
     return current_data, ui_config, view_config, status_message
 
 
@@ -98,3 +98,4 @@ if __name__ == "__main__":
         app = create_app()
     _start_browser_launcher_if_frozen(host=host, port=port)
     app.run(host=host, port=port, debug=debug_mode)
+

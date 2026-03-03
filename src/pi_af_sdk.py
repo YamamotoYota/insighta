@@ -5,8 +5,13 @@
 
 from __future__ import annotations
 
+import os
+import platform
 import re
+import struct
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -77,6 +82,7 @@ def parse_name_list(raw_text: str | None) -> tuple[str, ...]:
 def parse_tag_list(raw_text: str | None) -> tuple[str, ...]:
     """Backward-compatible alias for tag list parser."""
     return parse_name_list(raw_text)
+
 def normalize_max_rows(value: int | float | str | None, default_value: int = 10000) -> int:
     """Normalize per-target maximum row count."""
     if value in (None, ""):
@@ -174,19 +180,148 @@ def _validate_query_config(config: PIQueryConfig) -> None:
     raise PIDataError(f"未対応のPIデータ取得モードです: {config.data_source}")
 
 
+def _python_bitness() -> int:
+    """Return current Python process bitness."""
+    return struct.calcsize("P") * 8
+
+
+def _runtime_name(runtime_info: Any) -> str:
+    """Best-effort runtime name extraction from pythonnet runtime info."""
+    if runtime_info is None:
+        return ""
+
+    for attr in ("name", "runtime", "kind"):
+        try:
+            value = getattr(runtime_info, attr, None)
+        except Exception:
+            value = None
+        if value:
+            return str(value).strip().lower()
+
+    text = str(runtime_info).strip().lower()
+    if "coreclr" in text:
+        return "coreclr"
+    if "netfx" in text or ".net framework" in text:
+        return "netfx"
+    return ""
+
+
+def _afsdk_dll_candidates() -> list[Path]:
+    """Build candidate paths for OSIsoft.AFSDK.dll."""
+    roots: list[Path] = []
+
+    def _add_root(raw: str | None) -> None:
+        if not raw:
+            return
+        path = Path(str(raw)).expanduser()
+        if path not in roots:
+            roots.append(path)
+
+    _add_root(os.environ.get("PIPC"))
+    _add_root(os.environ.get("PIHOME"))
+    _add_root(os.environ.get("PIHOME64"))
+    _add_root(os.environ.get("ProgramFiles"))
+    _add_root(os.environ.get("ProgramFiles(x86)"))
+
+    candidates: list[Path] = []
+
+    def _add_candidate(path: Path) -> None:
+        try:
+            exists = path.exists() and path.is_file()
+        except Exception:
+            exists = False
+        if exists and path not in candidates:
+            candidates.append(path)
+
+    for root in roots:
+        _add_candidate(root / "AF" / "PublicAssemblies" / "4.0" / "OSIsoft.AFSDK.dll")
+        _add_candidate(root / "PIPC" / "AF" / "PublicAssemblies" / "4.0" / "OSIsoft.AFSDK.dll")
+        _add_candidate(root / "OSIsoft" / "AF" / "PublicAssemblies" / "4.0" / "OSIsoft.AFSDK.dll")
+        _add_candidate(root / "AVEVA" / "PI System" / "AF" / "PublicAssemblies" / "4.0" / "OSIsoft.AFSDK.dll")
+
+    return candidates
+
+
+def _add_afsdk_reference(clr: Any, runtime_info: Any) -> str:
+    """Add AF SDK assembly reference with absolute-path fallback."""
+    try:
+        clr.AddReference("OSIsoft.AFSDK")
+        return "OSIsoft.AFSDK"
+    except Exception as short_exc:
+        short_detail = f"{type(short_exc).__name__}: {short_exc}"
+
+    candidates = _afsdk_dll_candidates()
+    fallback_errors: list[str] = []
+
+    for dll_path in candidates:
+        try:
+            clr.AddReference(str(dll_path))
+            return str(dll_path)
+        except Exception as exc:
+            fallback_errors.append(f"{dll_path} -> {type(exc).__name__}: {exc}")
+
+    lines: list[str] = [
+        "OSIsoft.AFSDK の参照に失敗しました。",
+        f"- 短縮名参照エラー: {short_detail}",
+        f"- Python実行ファイル: {sys.executable}",
+        f"- Pythonビット数: {_python_bitness()}bit",
+        f"- OS: {platform.platform()}",
+        f"- pythonnet runtime: {runtime_info}",
+    ]
+
+    if candidates:
+        lines.append("- 探索した DLL パス:")
+        lines.extend([f"  - {path}" for path in candidates])
+    else:
+        lines.append("- OSIsoft.AFSDK.dll の候補パスが見つかりませんでした。")
+
+    if fallback_errors:
+        lines.append("- DLL直接参照のエラー（先頭3件）:")
+        lines.extend([f"  - {err}" for err in fallback_errors[:3]])
+
+    lines.append("- 対処: PI AF Client導入、x64/x86一致、`PYTHONNET_RUNTIME=netfx` を確認してください。")
+    raise PIDataError("\n".join(lines))
+
+
 def _load_af_sdk() -> dict[str, Any]:
-    """Load AF SDK types through pythonnet."""
+    """Load AF SDK types through pythonnet with netfx and path fallback."""
+    try:
+        from pythonnet import get_runtime_info, load
+    except ImportError as exc:  # pragma: no cover
+        raise PIDataError("PI AF SDKの利用には `pythonnet` が必要です。") from exc
+
+    runtime_info: Any = None
+    try:
+        runtime_info = get_runtime_info()
+    except Exception:
+        runtime_info = None
+
+    if runtime_info is None:
+        try:
+            load("netfx")
+        except Exception as exc:  # pragma: no cover
+            raise PIDataError(
+                "pythonnet runtime の初期化に失敗しました。`netfx` (.NET Framework) で実行できる環境か確認してください。"
+                f" 詳細: {type(exc).__name__}: {exc}"
+            ) from exc
+        try:
+            runtime_info = get_runtime_info()
+        except Exception:
+            runtime_info = "netfx (runtime info unavailable)"
+
+    runtime_name = _runtime_name(runtime_info)
+    if runtime_name and runtime_name != "netfx":
+        raise PIDataError(
+            "pythonnet runtime が netfx ではありません。AF SDK は .NET Framework (netfx) で実行してください。"
+            f" 現在: {runtime_info}. 環境変数 `PYTHONNET_RUNTIME=netfx` を設定して再実行してください。"
+        )
+
     try:
         import clr  # type: ignore
     except ImportError as exc:  # pragma: no cover
         raise PIDataError("PI AF SDKの利用には `pythonnet` が必要です。") from exc
 
-    try:
-        clr.AddReference("OSIsoft.AFSDK")
-    except Exception as exc:  # pragma: no cover
-        raise PIDataError(
-            "OSIsoft.AFSDK を読み込めません。PI AF Client（PI System Explorer）をインストールしてください。"
-        ) from exc
+    reference_hint = _add_afsdk_reference(clr, runtime_info)
 
     try:
         from OSIsoft.AF import AFTime, AFTimeRange, AFTimeSpan  # type: ignore
@@ -195,7 +330,10 @@ def _load_af_sdk() -> dict[str, Any]:
         from OSIsoft.AF.EventFrame import AFEventFrameSearch  # type: ignore
         from OSIsoft.AF.PI import PIPoint, PIServers  # type: ignore
     except Exception as exc:  # pragma: no cover
-        raise PIDataError("AF SDK API の読み込みに失敗しました。AF SDK バージョンを確認してください。") from exc
+        raise PIDataError(
+            "AF SDK API の読み込みに失敗しました。"
+            f" 参照元={reference_hint}, runtime={runtime_info}, 詳細={type(exc).__name__}: {exc}"
+        ) from exc
 
     return {
         "AFTime": AFTime,
@@ -209,7 +347,6 @@ def _load_af_sdk() -> dict[str, Any]:
         "AFElementSearch": AFElementSearch,
         "AFEventFrameSearch": AFEventFrameSearch,
     }
-
 
 def _resolve_named_server(servers: Any, server_name: str, *, kind_label: str) -> Any:
     """Resolve server by explicit name or default server."""

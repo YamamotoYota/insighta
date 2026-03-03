@@ -271,12 +271,23 @@ def create_layout(
                                 clearable=False,
                                 style={"width": "220px"},
                             ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "10px"},
+                    ),
+                    html.Div(
+                        [
                             dcc.Input(
                                 id="pi-server-input",
                                 type="text",
                                 placeholder="PI Data Archiveサーバー名（空欄なら既定）",
                                 style={"width": "320px"},
                             ),
+                        ],
+                        id="pi-da-server-block",
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
                             dcc.Input(
                                 id="pi-af-server-input",
                                 type="text",
@@ -290,7 +301,34 @@ def create_layout(
                                 style={"width": "240px"},
                             ),
                         ],
-                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "10px"},
+                        id="pi-af-server-db-block",
+                        style={"display": "none", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Details(
+                        [
+                            html.Summary("入力ガイド（サーバ名/DB名/パス形式）"),
+                            html.Ul(
+                                [
+                                    html.Li([html.B("PI Data Archiveサーバー名"), ": 通常はサーバー名のみ（例: ", html.Code("PISRV01"), "）。スラッシュは不要。"]),
+                                    html.Li([html.B("AFサーバー名"), ": 通常はサーバー名のみ（例: ", html.Code("AFSRV01"), "）。スラッシュは不要。"]),
+                                    html.Li([html.B("AFデータベース名"), ": データベース名のみ（例: ", html.Code("FactoryAF"), "）。", html.Code("AFSRV01/FactoryAF"), " のようにサーバー名は含めない。"]),
+                                    html.Li([html.B("AFエレメント名"), ": 単体名（例: ", html.Code("Unit01"), "）または階層パス（例: ", html.Code("\\AreaA\\Unit01"), "）。区切りはバックスラッシュ推奨。"]),
+                                    html.Li([html.B("イベントフレームテンプレート名"), ": テンプレート名のみ（例: ", html.Code("BatchEventTemplate"), "）。パスやスラッシュは不要。"]),
+                                ],
+                                style={"margin": "6px 0 0 18px", "color": "#444"},
+                            ),
+                            html.Div(
+                                [
+                                    "補足: ",
+                                    html.Code("/"),
+                                    " 区切りは使わず、階層指定が必要な場合は ",
+                                    html.Code("\\"),
+                                    "（バックスラッシュ）を使ってください。",
+                                ],
+                                style={"marginTop": "6px", "color": "#555"},
+                            ),
+                        ],
+                        style={"marginTop": "8px", "padding": "6px 8px", "border": "1px solid #e0e0e0", "borderRadius": "6px"},
                     ),
                     html.Div(
                         [
@@ -306,6 +344,12 @@ def create_layout(
                                 clearable=False,
                                 style={"width": "260px"},
                             ),
+                        ],
+                        id="pi-query-type-block",
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
                             dcc.Input(
                                 id="pi-max-rows-input",
                                 type="number",
@@ -316,7 +360,12 @@ def create_layout(
                                 placeholder="対象ごとの最大行数",
                                 style={"width": "180px"},
                             ),
+                            html.Div(
+                                "最大行数の上限です。10000 は『1対象あたり最大1万行』を意味します（例: タグごと / 属性ごと / イベント検索結果）。",
+                                style={"width": "100%", "fontSize": 12, "color": "#555"},
+                            ),
                         ],
+                        id="pi-max-rows-block",
                         style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
                     ),
                     html.Div(
@@ -326,23 +375,30 @@ def create_layout(
                                 type="text",
                                 value="*-1d",
                                 placeholder="開始時刻（例: *-1d, 2026-01-01 00:00:00）",
-                                style={"width": "280px"},
+                                style={"width": "420px"},
                             ),
                             dcc.Input(
                                 id="pi-end-time-input",
                                 type="text",
                                 value="*",
                                 placeholder="終了時刻（例: *）",
-                                style={"width": "220px"},
+                                style={"width": "320px"},
                             ),
+                        ],
+                        id="pi-time-range-block",
+                        style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
                             dcc.Input(
                                 id="pi-interval-input",
                                 type="text",
                                 value="1h",
                                 placeholder="間隔（Snapshot以外で使用, 例: 10m, 1h）",
-                                style={"width": "280px"},
+                                style={"width": "420px"},
                             ),
                         ],
+                        id="pi-interval-block",
                         style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap", "marginTop": "8px"},
                     ),
                     html.Div(
@@ -361,19 +417,29 @@ def create_layout(
                                 value=["average", "min", "max"],
                                 inline=True,
                             ),
+                            html.Div(
+                                "Summaryは、指定期間を間隔で区切った各区間の記録値を集計します。Average=区間内の平均値、Min/Max=最小/最大、Sum=合計、Count=件数、Std=標準偏差。",
+                                style={"width": "100%", "fontSize": 12, "color": "#555"},
+                            ),
                         ],
+                        id="pi-summary-settings-block",
                         style={"display": "flex", "alignItems": "center", "gap": "6px", "marginTop": "8px", "flexWrap": "wrap"},
                     ),
                     html.Div(
                         [
-                            html.Label("PIタグ一覧（PI DAタグ用）"),
+                            html.Label("PIタグ一覧（PI DAタグ用・複数指定可）"),
                             dcc.Textarea(
                                 id="pi-tags-text",
                                 value="",
-                                placeholder="例: sinusoid\ncdt158\nTAG_A, TAG_B",
+                                placeholder="記入例（1行1タグ）:\nsinusoid\ncdt158\n\nカンマ区切りでも可:\nTAG_A, TAG_B, TAG_C",
                                 style={"width": "100%", "height": "90px", "marginTop": "6px"},
                             ),
+                            html.Div(
+                                "複数タグは「改行」または「カンマ(,)」区切りで入力できます。入力ミスを減らすため、改行区切りを推奨します。",
+                                style={"marginTop": "6px", "fontSize": 12, "color": "#555"},
+                            ),
                         ],
+                        id="pi-tags-block",
                         style={"marginTop": "6px"},
                     ),
                     html.Div(
@@ -384,11 +450,6 @@ def create_layout(
                                 placeholder="AFエレメント名（AF属性用）",
                                 style={"width": "320px"},
                             ),
-                        ],
-                        style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginTop": "8px"},
-                    ),
-                    html.Div(
-                        [
                             html.Label("AF属性名一覧（AF属性用）"),
                             dcc.Textarea(
                                 id="pi-af-attributes-text",
@@ -397,7 +458,8 @@ def create_layout(
                                 style={"width": "100%", "height": "90px", "marginTop": "6px"},
                             ),
                         ],
-                        style={"marginTop": "6px"},
+                        id="pi-af-attribute-target-block",
+                        style={"display": "none", "marginTop": "8px"},
                     ),
                     html.Div(
                         [
@@ -407,11 +469,6 @@ def create_layout(
                                 placeholder="イベントフレームテンプレート名（AFイベントフレーム用）",
                                 style={"width": "380px"},
                             ),
-                        ],
-                        style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginTop": "8px"},
-                    ),
-                    html.Div(
-                        [
                             html.Label("イベント生成分析名一覧（AFイベントフレーム用）"),
                             dcc.Textarea(
                                 id="pi-ef-analyses-text",
@@ -420,7 +477,8 @@ def create_layout(
                                 style={"width": "100%", "height": "80px", "marginTop": "6px"},
                             ),
                         ],
-                        style={"marginTop": "6px"},
+                        id="pi-ef-target-block",
+                        style={"display": "none", "marginTop": "8px"},
                     ),
                     html.Button("PIデータを読み込み", id="pi-run-query-button", n_clicks=0, style={"marginTop": "8px"}),
                     html.Div(

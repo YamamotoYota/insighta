@@ -20,7 +20,7 @@ datas = [('assets', 'assets'), ('data', 'data')]
 binaries = []
 binaries += _dll_binaries_from(str(env_root / 'Library' / 'bin'))
 binaries += _dll_binaries_from(str(env_root / 'DLLs'))
-hiddenimports = ['pyodbc', 'pymysql', 'psycopg2', 'oracledb']
+hiddenimports = ['pyodbc', 'pymysql', 'psycopg2', 'oracledb', 'clr']
 tmp_ret = collect_all('lightgbm')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('shap')
@@ -62,3 +62,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+
