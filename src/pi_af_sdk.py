@@ -11,6 +11,7 @@ import platform
 import re
 import struct
 import sys
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,10 @@ import pandas as pd
 SUPPORTED_PI_DATA_SOURCES: tuple[str, ...] = ("pi_da_tag", "af_attribute", "af_event_frame")
 SUPPORTED_PI_QUERY_TYPES: tuple[str, ...] = ("snapshot", "recorded", "interpolated", "summary")
 SUPPORTED_SUMMARY_FUNCTIONS: tuple[str, ...] = ("average", "min", "max", "sum", "count", "std")
+
+FORCED_PYTHONNET_RUNTIME = "netfx"
+# Force pythonnet runtime selection at import time so shell/system env does not affect behavior.
+os.environ["PYTHONNET_RUNTIME"] = FORCED_PYTHONNET_RUNTIME
 
 
 class PIDataError(RuntimeError):
@@ -73,11 +78,12 @@ def parse_name_list(raw_text: str | None) -> tuple[str, ...]:
     text = str(raw_text or "")
     if not text.strip():
         return ()
-    tokens = re.split(r"[\n,;]+", text)
+
+    normalized = unicodedata.normalize("NFKC", text)
+    tokens = re.split(r"[\n,;、]+", normalized)
     parsed = [token.strip() for token in tokens if token and token.strip()]
     deduped = list(dict.fromkeys(parsed))
     return tuple(deduped)
-
 
 
 def parse_tag_list(raw_text: str | None) -> tuple[str, ...]:
@@ -93,6 +99,74 @@ def normalize_max_rows(value: int | float | str | None, default_value: int = 100
     except (TypeError, ValueError):
         return default_value
     return max(1, min(parsed, 500_000))
+
+
+def _normalize_text(value: Any) -> str:
+    """Normalize text for robust comparisons (case + full/half width)."""
+    return unicodedata.normalize("NFKC", str(value or "")).strip().lower()
+
+
+def _split_path_tokens(raw_text: str | None) -> list[str]:
+    """Split slash/backslash separated path text into tokens."""
+    normalized = unicodedata.normalize("NFKC", str(raw_text or "")).strip()
+    if not normalized:
+        return []
+    return [token.strip() for token in re.split(r"[\\/]+", normalized) if token and token.strip()]
+
+
+def _dedupe_keep_order(values: list[str]) -> tuple[str, ...]:
+    """Deduplicate strings while preserving order."""
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+    return tuple(output)
+
+
+def _af_database_candidates(database_name: str) -> tuple[str, ...]:
+    """Build tolerant AF database name candidates from raw user input."""
+    raw = unicodedata.normalize("NFKC", str(database_name or "")).strip()
+    if not raw:
+        return ()
+
+    tokens = _split_path_tokens(raw)
+    candidates = [raw, raw.replace("/", "\\")]
+    if tokens:
+        candidates.append(tokens[-1])
+    return _dedupe_keep_order([item for item in candidates if item])
+
+
+def _af_element_candidates(element_name: str, database_name: str) -> tuple[str, ...]:
+    """Build tolerant AF element key/path candidates from raw user input."""
+    raw = unicodedata.normalize("NFKC", str(element_name or "")).strip()
+    if not raw:
+        return ()
+
+    tokens = _split_path_tokens(raw)
+    db_tokens = _split_path_tokens(database_name)
+    db_name = db_tokens[-1] if db_tokens else ""
+
+    candidates: list[str] = [raw, raw.replace("/", "\\")]
+    if tokens:
+        joined = "\\".join(tokens)
+        candidates.extend([joined, "\\" + joined, tokens[-1]])
+
+        if db_name and _normalize_text(tokens[0]) == _normalize_text(db_name):
+            reduced = tokens[1:]
+            if reduced:
+                reduced_joined = "\\".join(reduced)
+                candidates.extend([reduced_joined, "\\" + reduced_joined])
+
+        if len(tokens) >= 2:
+            reduced = tokens[2:]
+            if reduced:
+                reduced_joined = "\\".join(reduced)
+                candidates.extend([reduced_joined, "\\" + reduced_joined])
+
+    return _dedupe_keep_order([item for item in candidates if item])
 
 
 def build_pi_query_config(
@@ -269,8 +343,8 @@ def _infer_pipc_root_from_dll(dll_path: Path) -> Path | None:
 
 def _prepare_afsdk_environment() -> None:
     """Prepare process-level env vars for robust AF SDK loading."""
-    if not os.environ.get("PYTHONNET_RUNTIME"):
-        os.environ["PYTHONNET_RUNTIME"] = "netfx"
+    # Always override runtime setting here to decouple from shell/system env vars.
+    os.environ["PYTHONNET_RUNTIME"] = FORCED_PYTHONNET_RUNTIME
 
     candidates = _afsdk_dll_candidates()
     parent_dirs = [str(path.parent) for path in candidates if path.parent]
@@ -294,6 +368,65 @@ def _prepare_afsdk_environment() -> None:
             if pipc_root is not None:
                 os.environ["PIPC"] = str(pipc_root)
                 break
+
+
+def _initialize_pythonnet_runtime() -> Any:
+    """Initialize pythonnet runtime as netfx regardless of shell/system configuration."""
+    try:
+        import pythonnet  # type: ignore
+        from pythonnet import get_runtime_info, load
+    except ImportError as exc:  # pragma: no cover
+        raise PIDataError("PI AF SDKの利用には `pythonnet` が必要です。") from exc
+
+    set_runtime = getattr(pythonnet, "set_runtime", None)
+
+    runtime_info: Any = None
+    try:
+        runtime_info = get_runtime_info()
+    except Exception:
+        runtime_info = None
+
+    runtime_name = _runtime_name(runtime_info)
+    if runtime_name == FORCED_PYTHONNET_RUNTIME:
+        return runtime_info
+
+    if runtime_info is not None and runtime_name and runtime_name != FORCED_PYTHONNET_RUNTIME:
+        raise PIDataError(
+            "pythonnet runtime が既に netfx 以外で初期化されています。"
+            f" 現在: {runtime_info}. プロセス起動直後にINSIGHTAのみを実行してください。"
+        )
+
+    # First try explicit runtime object selection.
+    if callable(set_runtime):
+        try:
+            from clr_loader import get_netfx  # type: ignore
+
+            set_runtime(get_netfx())
+        except Exception:
+            pass
+
+    try:
+        load(FORCED_PYTHONNET_RUNTIME)
+    except Exception:
+        # Runtime may already be initialized; verify the active runtime before failing.
+        try:
+            runtime_info = get_runtime_info()
+        except Exception:
+            runtime_info = None
+
+        runtime_name = _runtime_name(runtime_info)
+        if runtime_name != FORCED_PYTHONNET_RUNTIME:
+            raise PIDataError(
+                "pythonnet runtime の初期化に失敗しました。"
+                f" 要求runtime={FORCED_PYTHONNET_RUNTIME}, 現在={runtime_info}"
+            )
+
+    try:
+        runtime_info = get_runtime_info()
+    except Exception:
+        runtime_info = f"{FORCED_PYTHONNET_RUNTIME} (runtime info unavailable)"
+
+    return runtime_info
 
 
 def _import_afsdk_symbol(
@@ -370,36 +503,13 @@ def _add_afsdk_reference(clr: Any, runtime_info: Any) -> str:
 def _load_af_sdk() -> dict[str, Any]:
     """Load AF SDK types through pythonnet with netfx and path fallback."""
     _prepare_afsdk_environment()
-
-    try:
-        from pythonnet import get_runtime_info, load
-    except ImportError as exc:  # pragma: no cover
-        raise PIDataError("PI AF SDKの利用には `pythonnet` が必要です。") from exc
-
-    runtime_info: Any = None
-    try:
-        runtime_info = get_runtime_info()
-    except Exception:
-        runtime_info = None
-
-    if runtime_info is None:
-        try:
-            load("netfx")
-        except Exception as exc:  # pragma: no cover
-            raise PIDataError(
-                "pythonnet runtime の初期化に失敗しました。`netfx` (.NET Framework) で実行できる環境か確認してください。"
-                f" 詳細: {type(exc).__name__}: {exc}"
-            ) from exc
-        try:
-            runtime_info = get_runtime_info()
-        except Exception:
-            runtime_info = "netfx (runtime info unavailable)"
+    runtime_info = _initialize_pythonnet_runtime()
 
     runtime_name = _runtime_name(runtime_info)
-    if runtime_name and runtime_name != "netfx":
+    if runtime_name and runtime_name != FORCED_PYTHONNET_RUNTIME:
         raise PIDataError(
-            "pythonnet runtime が netfx ではありません。AF SDK は .NET Framework (netfx) で実行してください。"
-            f" 現在: {runtime_info}. 環境変数 `PYTHONNET_RUNTIME=netfx` を設定して再実行してください。"
+            "pythonnet runtime が netfx ではありません。"
+            f" 現在: {runtime_info}"
         )
 
     try:
@@ -454,14 +564,16 @@ def _load_af_sdk() -> dict[str, Any]:
         "AFEventFrameSearch": AFEventFrameSearch,
     }
 
+
 def _resolve_named_server(servers: Any, server_name: str, *, kind_label: str) -> Any:
     """Resolve server by explicit name or default server."""
     if server_name:
+        requested = _normalize_text(server_name)
         try:
             return servers[server_name]
         except Exception:
             for server in servers:
-                if str(getattr(server, "Name", "")).strip().lower() == server_name.strip().lower():
+                if _normalize_text(getattr(server, "Name", "")) == requested:
                     return server
             raise PIDataError(f"{kind_label}サーバーが見つかりません: {server_name}")
 
@@ -493,54 +605,89 @@ def _connect_server(server: Any, *, label: str) -> None:
 
 def _resolve_af_database(af_server: Any, database_name: str) -> Any:
     """Resolve AF database from AF server."""
-    if not database_name:
+    candidates = _af_database_candidates(database_name)
+    if not candidates:
         raise PIDataError("AFデータベース名を入力してください。")
 
     databases = getattr(af_server, "Databases", None)
     if databases is None:
         raise PIDataError("AFサーバーからデータベース一覧を取得できません。")
 
-    try:
-        return databases[database_name]
-    except Exception:
-        for db in databases:
-            if str(getattr(db, "Name", "")).strip().lower() == database_name.strip().lower():
-                return db
+    for candidate in candidates:
+        try:
+            return databases[candidate]
+        except Exception:
+            continue
 
-    raise PIDataError(f"AFデータベースが見つかりません: {database_name}")
+    candidate_norms = {_normalize_text(name) for name in candidates}
+    for db in databases:
+        if _normalize_text(getattr(db, "Name", "")) in candidate_norms:
+            return db
+
+    raise PIDataError(
+        "AFデータベースが見つかりません: "
+        f"{database_name} (候補: {', '.join(candidates)})"
+    )
 
 
-def _resolve_af_element(af_database: Any, element_name: str, sdk: dict[str, Any]) -> Any:
+def _resolve_af_element(
+    af_database: Any,
+    element_name: str,
+    sdk: dict[str, Any],
+    *,
+    database_name: str = "",
+) -> Any:
     """Resolve AF element by name/path."""
-    if not element_name:
+    candidates = _af_element_candidates(element_name, database_name)
+    if not candidates:
         raise PIDataError("AFエレメント名を入力してください。")
 
     AFElement = sdk["AFElement"]
     AFElementSearch = sdk["AFElementSearch"]
 
-    try:
-        return AFElement.FindElement(af_database, element_name)
-    except Exception:
-        pass
+    for candidate in candidates:
+        try:
+            return AFElement.FindElement(af_database, candidate)
+        except Exception:
+            continue
 
     elements = getattr(af_database, "Elements", None)
     if elements is not None:
+        candidate_norms = {_normalize_text(name) for name in candidates}
+
+        for candidate in candidates:
+            try:
+                return elements[candidate]
+            except Exception:
+                continue
+
+        for elem in elements:
+            if _normalize_text(getattr(elem, "Name", "")) in candidate_norms:
+                return elem
+
+    simple_tokens: list[str] = []
+    for candidate in candidates:
+        tokens = _split_path_tokens(candidate)
+        if tokens:
+            simple_tokens.append(tokens[-1])
+        else:
+            simple_tokens.append(candidate)
+    simple_names = _dedupe_keep_order([name for name in simple_tokens if name])
+
+    for simple_name in simple_names:
+        escaped = simple_name.replace("'", "''")
         try:
-            return elements[element_name]
+            search = AFElementSearch(af_database, "insighta_element_search", f"Name:'{escaped}'")
+            found = search.FindObjects(1)
+            for elem in found:
+                return elem
         except Exception:
-            for elem in elements:
-                if str(getattr(elem, "Name", "")).strip().lower() == element_name.strip().lower():
-                    return elem
+            continue
 
-    try:
-        search = AFElementSearch(af_database, "insighta_element_search", f"Name:'{element_name}'")
-        found = search.FindObjects(1)
-        for elem in found:
-            return elem
-    except Exception:
-        pass
-
-    raise PIDataError(f"AFエレメントが見つかりません: {element_name}")
+    raise PIDataError(
+        "AFエレメントが見つかりません: "
+        f"{element_name} (候補: {', '.join(candidates[:4])})"
+    )
 
 
 def _resolve_af_attribute(element: Any, attribute_name: str) -> Any:
@@ -549,11 +696,13 @@ def _resolve_af_attribute(element: Any, attribute_name: str) -> Any:
     if attributes is None:
         raise PIDataError("AFエレメントに属性コレクションがありません。")
 
+    requested_norm = _normalize_text(attribute_name)
+
     try:
         return attributes[attribute_name]
     except Exception:
         for attr in attributes:
-            if str(getattr(attr, "Name", "")).strip().lower() == attribute_name.strip().lower():
+            if _normalize_text(getattr(attr, "Name", "")) == requested_norm:
                 return attr
 
     raise PIDataError(f"AF属性が見つかりません: {attribute_name}")
@@ -861,7 +1010,12 @@ def _fetch_af_attribute_rows(config: PIQueryConfig, sdk: dict[str, Any]) -> list
     af_server = _resolve_named_server(af_server_collection_factory(), config.af_server, kind_label="AF")
     _connect_server(af_server, label="AFサーバー")
     af_database = _resolve_af_database(af_server, config.af_database)
-    element = _resolve_af_element(af_database, config.af_element, sdk)
+    element = _resolve_af_element(
+        af_database,
+        config.af_element,
+        sdk,
+        database_name=config.af_database,
+    )
 
     query_type = normalize_pi_query_type(config.query_type)
     rows: list[dict[str, Any]] = []

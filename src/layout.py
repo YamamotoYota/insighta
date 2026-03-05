@@ -291,13 +291,13 @@ def create_layout(
                             dcc.Input(
                                 id="pi-af-server-input",
                                 type="text",
-                                placeholder="AFサーバー名（空欄なら既定）",
+                                placeholder="AFサーバー名またはパス（例: AFSRV01, \\AFSRV01）",
                                 style={"width": "260px"},
                             ),
                             dcc.Input(
                                 id="pi-af-database-input",
                                 type="text",
-                                placeholder="AFデータベース名",
+                                placeholder="AFデータベース名またはパス（例: FactoryAF, \\AFSRV01\FactoryAF）",
                                 style={"width": "240px"},
                             ),
                         ],
@@ -310,10 +310,10 @@ def create_layout(
                             html.Ul(
                                 [
                                     html.Li([html.B("PI Data Archiveサーバー名"), ": 通常はサーバー名のみ（例: ", html.Code("PISRV01"), "）。スラッシュは不要。"]),
-                                    html.Li([html.B("AFサーバー名"), ": 通常はサーバー名のみ（例: ", html.Code("AFSRV01"), "）。スラッシュは不要。"]),
-                                    html.Li([html.B("AFデータベース名"), ": データベース名のみ（例: ", html.Code("FactoryAF"), "）。", html.Code("AFSRV01/FactoryAF"), " のようにサーバー名は含めない。"]),
-                                    html.Li([html.B("AFエレメント名"), ": 単体名（例: ", html.Code("Unit01"), "）または階層パス（例: ", html.Code("\\AreaA\\Unit01"), "）。区切りはバックスラッシュ推奨。"]),
-                                    html.Li([html.B("イベントフレームテンプレート名"), ": テンプレート名のみ（例: ", html.Code("BatchEventTemplate"), "）。パスやスラッシュは不要。"]),
+                                    html.Li([html.B("AFサーバー名"), ": サーバー名（例: ", html.Code("AFSRV01"), "）または ", html.Code("\\AFSRV01"), " の形式で入力できます。"]),
+                                    html.Li([html.B("AFデータベース名"), ": ", html.Code("FactoryAF"), " のような名前単体、または ", html.Code("\\AFSRV01\FactoryAF"), " のようなパス形式に対応します。"]),
+                                    html.Li([html.B("AFエレメント名"), ": 単体名（例: ", html.Code("Unit01"), "）/ 階層パス（例: ", html.Code("\\AreaA\\Unit01"), "）/ 完全パス（例: ", html.Code("\\\\AFSRV01\\FactoryAF\\AreaA\\Unit01"), "）に対応します。"]),
+                                    html.Li([html.B("イベントフレームテンプレート名"), ": テンプレート名のみ（例: ", html.Code("BatchEventTemplate"), "）。日本語名でも可。パス指定は不要です。"]),
                                 ],
                                 style={"margin": "6px 0 0 18px", "color": "#444"},
                             ),
@@ -444,18 +444,27 @@ def create_layout(
                     ),
                     html.Div(
                         [
+                            html.Label("AFエレメント名（AF属性用）"),
                             dcc.Input(
                                 id="pi-af-element-input",
                                 type="text",
-                                placeholder="AFエレメント名（AF属性用）",
-                                style={"width": "320px"},
+                                placeholder="例: Unit01 / \\AreaA\\Unit01 / \\\\AFSRV01\\FactoryAF\\AreaA\\Unit01（日本語名可）",
+                                style={"width": "100%", "maxWidth": "760px"},
                             ),
-                            html.Label("AF属性名一覧（AF属性用）"),
+                            html.Div(
+                                "単体名・階層パス・完全パスに対応します。区切りは / または \\ を使用できます（全角記号も可）。",
+                                style={"marginTop": "6px", "fontSize": 12, "color": "#555"},
+                            ),
+                            html.Label("AF属性名一覧（AF属性用・複数指定可）", style={"marginTop": "8px"}),
                             dcc.Textarea(
                                 id="pi-af-attributes-text",
                                 value="",
-                                placeholder="例: Temperature\nPressure\nFlowRate",
-                                style={"width": "100%", "height": "90px", "marginTop": "6px"},
+                                placeholder="記入例（1行1属性）:\nTemperature\nPressure\n流量\n\nカンマ区切りでも可:\nTAG_A, TAG_B, 温度",
+                                style={"width": "100%", "height": "96px", "marginTop": "6px"},
+                            ),
+                            html.Div(
+                                "複数属性は「改行」「カンマ(,)」「読点(、)」で区切れます。日本語属性名にも対応します。",
+                                style={"marginTop": "6px", "fontSize": 12, "color": "#555"},
                             ),
                         ],
                         id="pi-af-attribute-target-block",
@@ -463,18 +472,27 @@ def create_layout(
                     ),
                     html.Div(
                         [
+                            html.Label("イベントフレームテンプレート名（AFイベントフレーム用）"),
                             dcc.Input(
                                 id="pi-ef-template-input",
                                 type="text",
-                                placeholder="イベントフレームテンプレート名（AFイベントフレーム用）",
-                                style={"width": "380px"},
+                                placeholder="例: BatchEventTemplate（テンプレート名のみ。日本語名可）",
+                                style={"width": "100%", "maxWidth": "760px"},
                             ),
-                            html.Label("イベント生成分析名一覧（AFイベントフレーム用）"),
+                            html.Div(
+                                "テンプレート名はパスではなく名前単体で入力してください。",
+                                style={"marginTop": "6px", "fontSize": 12, "color": "#555"},
+                            ),
+                            html.Label("イベント生成分析名一覧（AFイベントフレーム用・複数指定可）", style={"marginTop": "8px"}),
                             dcc.Textarea(
                                 id="pi-ef-analyses-text",
                                 value="",
-                                placeholder="例: BatchStartAnalysis\nQualityCheckAnalysis",
-                                style={"width": "100%", "height": "80px", "marginTop": "6px"},
+                                placeholder="記入例（1行1分析）:\nBatchStartAnalysis\nQualityCheckAnalysis\n\nカンマ区切りでも可:\nAnalysisA, AnalysisB",
+                                style={"width": "100%", "height": "90px", "marginTop": "6px"},
+                            ),
+                            html.Div(
+                                "複数分析は「改行」「カンマ(,)」「読点(、)」で区切れます。指定した分析名のいずれかに一致するイベントを取得します。",
+                                style={"marginTop": "6px", "fontSize": 12, "color": "#555"},
                             ),
                         ],
                         id="pi-ef-target-block",
@@ -482,7 +500,7 @@ def create_layout(
                     ),
                     html.Button("PIデータを読み込み", id="pi-run-query-button", n_clicks=0, style={"marginTop": "8px"}),
                     html.Div(
-                        "※ PI AF SDK（AF Client）と pythonnet が必要です。PI AF属性はPI DAタグと同様の行形式で返します。",
+                        "※ PI AF SDK（AF Client）と pythonnet が必要です。PI DAタグ / PI AF属性は時刻をキーにした列形式（横持ち）で返します。",
                         style={"marginTop": "6px", "color": "#555"},
                     ),
                 ],
@@ -961,3 +979,4 @@ def create_layout(
         ],
         style={"padding": "16px", "fontFamily": "Segoe UI, sans-serif"},
     )
+
