@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 import socket
 import sys
 import threading
@@ -15,6 +16,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from dash import Dash
+
+# Force pythonnet runtime in this process before any module can import pythonnet.
+os.environ["PYTHONNET_RUNTIME"] = "netfx"
 
 from src.callbacks import register_callbacks
 from src.layout import create_layout
