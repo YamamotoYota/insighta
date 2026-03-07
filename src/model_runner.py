@@ -23,16 +23,61 @@ from .modeling import (
 )
 
 MODEL_DEFINITIONS: dict[str, dict[str, str]] = {
-    "unsup_pca": {"task": "unsupervised", "label": "教師なし: PCA"},
-    "unsup_ica": {"task": "unsupervised", "label": "教師なし: ICA"},
-    "reg_linear": {"task": "regression", "label": "回帰: 重回帰"},
-    "reg_pls": {"task": "regression", "label": "回帰: PLS回帰"},
-    "reg_lgbm": {"task": "regression", "label": "回帰: LightGBM"},
-    "reg_rf": {"task": "regression", "label": "回帰: ランダムフォレスト"},
-    "cls_logistic": {"task": "classification", "label": "分類: ロジスティック回帰"},
-    "cls_lgbm": {"task": "classification", "label": "分類: LightGBM"},
-    "cls_tree": {"task": "classification", "label": "分類: 決定木"},
-    "cls_rf": {"task": "classification", "label": "分類: ランダムフォレスト"},
+    "unsup_pca": {
+        "task": "unsupervised",
+        "label": "教師なし: PCA",
+        "description": "目的変数なしで主成分に要約し、スコア散布図と Loading^2 を確認します。",
+    },
+    "unsup_pca_t2q": {
+        "task": "unsupervised",
+        "label": "教師なし: PCA異常予兆検知 (T2/Q)",
+        "description": "学習データで PCA を作成し、主成分空間の逸脱を T2、再構成残差を Q として監視します。99%管理限界と寄与度を表示します。",
+    },
+    "unsup_ica": {
+        "task": "unsupervised",
+        "label": "教師なし: ICA",
+        "description": "独立成分分析で非ガウスな構造を抽出し、スコアと Mixing matrix を確認します。",
+    },
+    "reg_linear": {
+        "task": "regression",
+        "label": "回帰: 重回帰",
+        "description": "線形回帰で説明変数と目的変数の線形関係を学習し、標準化回帰係数を確認します。",
+    },
+    "reg_pls": {
+        "task": "regression",
+        "label": "回帰: PLS回帰",
+        "description": "多重共線性がある場合でも潜在変数で回帰し、VIP で重要変数を確認します。",
+    },
+    "reg_lgbm": {
+        "task": "regression",
+        "label": "回帰: LightGBM",
+        "description": "勾配ブースティングで非線形回帰を行い、SHAP と Gain importance を確認します。",
+    },
+    "reg_rf": {
+        "task": "regression",
+        "label": "回帰: ランダムフォレスト",
+        "description": "アンサンブル木で非線形回帰を行い、Permutation importance と SHAP を確認します。",
+    },
+    "cls_logistic": {
+        "task": "classification",
+        "label": "分類: ロジスティック回帰",
+        "description": "2値/多値分類の基準線として使いやすい線形分類モデルです。ROC と β を確認します。",
+    },
+    "cls_lgbm": {
+        "task": "classification",
+        "label": "分類: LightGBM",
+        "description": "勾配ブースティングで分類し、混同行列・ROC・SHAP/Gain importance を確認します。",
+    },
+    "cls_tree": {
+        "task": "classification",
+        "label": "分類: 決定木",
+        "description": "単一木で分類ルールを可視化しやすいモデルです。Information Gain と木構造を確認します。",
+    },
+    "cls_rf": {
+        "task": "classification",
+        "label": "分類: ランダムフォレスト",
+        "description": "アンサンブル木で分類し、混同行列・ROC・Permutation importance を確認します。",
+    },
 }
 
 DEFAULT_MODEL_KEY = "reg_linear"
@@ -191,6 +236,11 @@ def model_label(model_key: str) -> str:
     return MODEL_DEFINITIONS.get(model_key, MODEL_DEFINITIONS[DEFAULT_MODEL_KEY])["label"]
 
 
+def model_description(model_key: str) -> str:
+    """Return descriptive help text for model key."""
+    return MODEL_DEFINITIONS.get(model_key, MODEL_DEFINITIONS[DEFAULT_MODEL_KEY]).get("description", "")
+
+
 def model_requires_target(model_key: str) -> bool:
     """Return True if selected model requires target variable."""
     return model_task(model_key) in {"regression", "classification"}
@@ -258,6 +308,7 @@ def default_hyperparams(model_key: str) -> dict[str, Any]:
     """Return default hyperparameters for each model."""
     defaults: dict[str, dict[str, Any]] = {
         "unsup_pca": {"n_components": 2},
+        "unsup_pca_t2q": {"n_components": 2},
         "unsup_ica": {"n_components": 2, "max_iter": 500, "tol": 1e-4},
         "reg_linear": {"fit_intercept": True},
         "reg_pls": {"n_components": 2, "max_iter": 500},
@@ -725,7 +776,7 @@ def _build_estimator(model_key: str, params: dict[str, Any], *, random_seed: int
     """Instantiate estimator from model key."""
     merged = default_hyperparams(model_key)
     merged.update(params)
-    if model_key in {"reg_rf", "cls_rf", "cls_tree", "reg_lgbm", "cls_lgbm", "unsup_pca", "unsup_ica"}:
+    if model_key in {"reg_rf", "cls_rf", "cls_tree", "reg_lgbm", "cls_lgbm", "unsup_pca", "unsup_pca_t2q", "unsup_ica"}:
         merged.setdefault("random_state", random_seed)
 
     try:
@@ -753,7 +804,7 @@ def _build_estimator(model_key: str, params: dict[str, Any], *, random_seed: int
             from sklearn.ensemble import RandomForestClassifier
 
             return RandomForestClassifier(**merged)
-        if model_key == "unsup_pca":
+        if model_key in {"unsup_pca", "unsup_pca_t2q"}:
             from sklearn.decomposition import PCA
 
             return PCA(**merged)
@@ -1461,6 +1512,224 @@ def _run_classification_model(
     }
 
 
+def _transformed_feature_sources(preprocessor: Any) -> list[str]:
+    """Map transformed feature columns back to original feature names when possible."""
+    transformed_names = _transformed_feature_names(preprocessor)
+    try:
+        transformers = list(getattr(preprocessor, "transformers_", []))
+    except Exception:
+        return transformed_names
+
+    sources: list[str] = []
+    for name, transformer, cols in transformers:
+        if name == "remainder" or transformer == "drop":
+            continue
+
+        input_cols = [str(col) for col in (cols or [])]
+        if not input_cols:
+            continue
+
+        last_transformer = transformer
+        if hasattr(transformer, "named_steps"):
+            steps = list(getattr(transformer, "named_steps", {}).values())
+            if steps:
+                last_transformer = steps[-1]
+
+        out_names: list[str] = []
+        try:
+            out_names = [str(value) for value in last_transformer.get_feature_names_out(input_cols)]
+        except Exception:
+            out_names = []
+
+        if out_names and len(out_names) != len(input_cols):
+            sorted_inputs = sorted(input_cols, key=len, reverse=True)
+            for out_name in out_names:
+                matched = next((col for col in sorted_inputs if out_name == col or out_name.startswith(f"{col}_")), None)
+                sources.append(matched or input_cols[0])
+            continue
+
+        sources.extend(input_cols)
+
+    if len(sources) != len(transformed_names):
+        return transformed_names
+    return sources
+
+
+def _aggregate_contribution_frame(contrib_values: np.ndarray, feature_sources: list[str]) -> pd.DataFrame:
+    """Aggregate transformed-space contribution values back to feature-level columns."""
+    arr = np.asarray(contrib_values, dtype=float)
+    if arr.ndim != 2 or arr.size == 0:
+        return pd.DataFrame()
+
+    columns = list(feature_sources[: arr.shape[1]])
+    if len(columns) < arr.shape[1]:
+        columns.extend([f"feature_{idx}" for idx in range(len(columns), arr.shape[1])])
+
+    frame = pd.DataFrame(arr, columns=columns)
+    if frame.columns.duplicated().any():
+        frame = frame.T.groupby(level=0).sum().T
+    return frame
+
+
+def _pca_full_eigenvalues(x_scaled: np.ndarray) -> np.ndarray:
+    """Return full covariance eigenvalues for PCA monitoring limits."""
+    arr = np.asarray(x_scaled, dtype=float)
+    if arr.ndim != 2 or arr.shape[0] <= 1:
+        return np.zeros(arr.shape[1] if arr.ndim == 2 else 0, dtype=float)
+
+    centered = arr - np.nanmean(arr, axis=0, keepdims=True)
+    centered = np.nan_to_num(centered, nan=0.0, posinf=0.0, neginf=0.0)
+    singular_values = np.linalg.svd(centered, full_matrices=False, compute_uv=False)
+    return np.asarray((singular_values ** 2) / max(arr.shape[0] - 1, 1), dtype=float)
+
+
+def _hotelling_t2_limit(n_samples: int, n_components: int, alpha: float = 0.99) -> float:
+    """Calculate Hotelling T2 control limit."""
+    if n_components <= 0 or n_samples <= n_components:
+        return float("nan")
+
+    from scipy.stats import f as f_dist
+
+    scale = (n_components * (n_samples - 1) * (n_samples + 1)) / (n_samples * (n_samples - n_components))
+    return float(scale * f_dist.ppf(alpha, n_components, n_samples - n_components))
+
+
+def _jackson_q_limit(x_train_scaled: np.ndarray, n_components: int, alpha: float = 0.99) -> float:
+    """Calculate Jackson-Mudholkar Q (SPE) control limit."""
+    residual_eigs = _pca_full_eigenvalues(x_train_scaled)[int(n_components) :]
+    residual_eigs = residual_eigs[np.isfinite(residual_eigs) & (residual_eigs > 1e-12)]
+    if residual_eigs.size == 0:
+        return 0.0
+
+    theta1 = float(np.sum(residual_eigs))
+    theta2 = float(np.sum(residual_eigs**2))
+    theta3 = float(np.sum(residual_eigs**3))
+    if theta1 <= 0 or theta2 <= 0:
+        return 0.0
+
+    from scipy.stats import norm
+
+    h0 = 1.0 - (2.0 * theta1 * theta3) / (3.0 * (theta2**2))
+    h0 = max(float(h0), 1e-6)
+    ca = float(norm.ppf(alpha))
+    term = 1.0 + (theta2 * h0 * (h0 - 1.0)) / (theta1**2) + ca * np.sqrt(2.0 * theta2 * (h0**2)) / theta1
+    term = max(float(term), 1e-12)
+    return float(theta1 * (term ** (1.0 / h0)))
+
+
+def _build_monitoring_stat_figure(
+    *,
+    train_values: np.ndarray,
+    test_values: np.ndarray,
+    train_idx: pd.Index,
+    test_idx: pd.Index,
+    title: str,
+    yaxis_title: str,
+    limit95: float,
+    limit99: float,
+) -> go.Figure:
+    """Build monitoring chart for train/test statistics."""
+    train_values = np.asarray(train_values, dtype=float).reshape(-1)
+    test_values = np.asarray(test_values, dtype=float).reshape(-1)
+    train_x = np.arange(train_values.size)
+    test_x = np.arange(train_values.size, train_values.size + test_values.size)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=train_x,
+            y=train_values,
+            mode="lines+markers",
+            name="学習",
+            line={"color": "#4C78A8"},
+            marker={"size": 6},
+            customdata=[str(idx) for idx in train_idx],
+            hovertemplate="サンプル順=%{x}<br>統計量=%{y:.6g}<br>index=%{customdata}<extra>学習</extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=test_x,
+            y=test_values,
+            mode="lines+markers",
+            name="テスト",
+            line={"color": "#F58518"},
+            marker={"size": 6},
+            customdata=[str(idx) for idx in test_idx],
+            hovertemplate="サンプル順=%{x}<br>統計量=%{y:.6g}<br>index=%{customdata}<extra>テスト</extra>",
+        )
+    )
+
+    if np.isfinite(limit95):
+        fig.add_trace(
+            go.Scatter(
+                x=[0, max(train_values.size + test_values.size - 1, 0)],
+                y=[limit95, limit95],
+                mode="lines",
+                name="95%管理限界",
+                line={"color": "#9c755f", "dash": "dot"},
+            )
+        )
+    if np.isfinite(limit99):
+        fig.add_trace(
+            go.Scatter(
+                x=[0, max(train_values.size + test_values.size - 1, 0)],
+                y=[limit99, limit99],
+                mode="lines",
+                name="99%管理限界",
+                line={"color": "#e45756", "dash": "dash"},
+            )
+        )
+
+    if train_values.size and test_values.size:
+        fig.add_vline(x=train_values.size - 0.5, line_width=1, line_dash="dot", line_color="#7f7f7f")
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="サンプル順",
+        yaxis_title=yaxis_title,
+        margin={"l": 44, "r": 24, "t": 52, "b": 52},
+        legend={"orientation": "h"},
+    )
+    return fig
+
+
+def _summarize_pca_contributions(
+    contrib_values: np.ndarray,
+    feature_sources: list[str],
+    sample_index: pd.Index,
+    stat_values: np.ndarray,
+    limit99: float,
+    *,
+    label: str,
+) -> tuple[pd.DataFrame, str]:
+    """Summarize PCA monitoring contributions by feature."""
+    frame = _aggregate_contribution_frame(contrib_values, feature_sources)
+    if frame.empty:
+        return pd.DataFrame(columns=["feature", "contribution", "basis"]), f"{label} 寄与度を計算できませんでした。"
+
+    stats = np.asarray(stat_values, dtype=float).reshape(-1)
+    alarm_mask = stats > float(limit99) if np.isfinite(limit99) else np.zeros(frame.shape[0], dtype=bool)
+
+    if alarm_mask.any():
+        summary = frame.loc[alarm_mask].mean(axis=0)
+        basis = f"{label} 99%閾値超過平均 ({int(alarm_mask.sum())}件)"
+    else:
+        sample_pos = int(np.nanargmax(stats)) if stats.size else 0
+        summary = frame.iloc[sample_pos]
+        sample_name = str(sample_index[sample_pos]) if len(sample_index) > sample_pos else str(sample_pos)
+        basis = f"{label} 最大サンプル ({sample_name})"
+
+    result = pd.DataFrame(
+        {
+            "feature": [str(name) for name in summary.index],
+            "contribution": np.asarray(summary, dtype=float),
+        }
+    ).sort_values("contribution", ascending=False)
+    result["basis"] = basis
+    return result.reset_index(drop=True), basis
+
+
 def _run_unsupervised_model(
     model_key: str,
     prepared: dict[str, Any],
@@ -1471,8 +1740,8 @@ def _run_unsupervised_model(
     x_test: pd.DataFrame = prepared["x_test"]
 
     preprocessor = _build_feature_preprocessor(x_train)
-    x_train_scaled = preprocessor.fit_transform(x_train)
-    x_test_scaled = preprocessor.transform(x_test)
+    x_train_scaled = np.asarray(preprocessor.fit_transform(x_train), dtype=float)
+    x_test_scaled = np.asarray(preprocessor.transform(x_test), dtype=float)
     transformed_names = _transformed_feature_names(preprocessor)
 
     feature_count = int(x_train_scaled.shape[1])
@@ -1491,8 +1760,10 @@ def _run_unsupervised_model(
 
     recon_train = np.asarray(estimator.inverse_transform(score_train), dtype=float)
     recon_test = np.asarray(estimator.inverse_transform(score_test), dtype=float)
-    rmse_train = float(np.sqrt(np.mean((x_train_scaled - recon_train) ** 2)))
-    rmse_test = float(np.sqrt(np.mean((x_test_scaled - recon_test) ** 2)))
+    residual_train = np.asarray(x_train_scaled - recon_train, dtype=float)
+    residual_test = np.asarray(x_test_scaled - recon_test, dtype=float)
+    rmse_train = float(np.sqrt(np.mean(residual_train**2)))
+    rmse_test = float(np.sqrt(np.mean(residual_test**2)))
 
     score_fig = _build_unsupervised_score_figure(
         score_train=score_train,
@@ -1517,13 +1788,14 @@ def _run_unsupervised_model(
     notes: list[str] = list(prepared["split_warnings"])
     notes.append("教師なしモデルは標準化済み学習データで学習し、学習/テスト両方の変換結果を表示しています。")
 
+    figures: list[go.Figure] = [score_fig, detail_fig]
     importance_tables: list[dict[str, Any]] = []
     importance_figures: list[dict[str, Any]] = []
     extra_text_blocks: list[dict[str, str]] = []
 
-    if model_key == "unsup_pca":
+    if model_key in {"unsup_pca", "unsup_pca_t2q"}:
         components = np.asarray(getattr(estimator, "components_", []), dtype=float)
-        explained = np.asarray(getattr(estimator, "explained_variance_", []), dtype=float)
+        explained = np.asarray(getattr(estimator, "explained_variance_", []), dtype=float).reshape(-1)
         if components.ndim == 2 and components.size and explained.size:
             loadings = components.T * np.sqrt(explained.reshape(1, -1))
             loading_sq = loadings**2
@@ -1554,6 +1826,119 @@ def _run_unsupervised_model(
                 margin={"l": 120, "r": 24, "t": 52, "b": 44},
             )
             importance_figures.append({"title": "Loadingの2乗 ヒートマップ", "figure": heat})
+
+        if model_key == "unsup_pca_t2q" and components.ndim == 2 and components.size and explained.size:
+            safe_explained = np.where(explained > 1e-12, explained, 1e-12)
+            t2_train = np.sum((score_train**2) / safe_explained.reshape(1, -1), axis=1)
+            t2_test = np.sum((score_test**2) / safe_explained.reshape(1, -1), axis=1)
+            q_train = np.sum(residual_train**2, axis=1)
+            q_test = np.sum(residual_test**2, axis=1)
+
+            t2_limit95 = _hotelling_t2_limit(x_train_scaled.shape[0], n_components, 0.95)
+            t2_limit99 = _hotelling_t2_limit(x_train_scaled.shape[0], n_components, 0.99)
+            q_limit95 = _jackson_q_limit(x_train_scaled, n_components, 0.95)
+            q_limit99 = _jackson_q_limit(x_train_scaled, n_components, 0.99)
+
+            figures.extend(
+                [
+                    _build_monitoring_stat_figure(
+                        train_values=t2_train,
+                        test_values=t2_test,
+                        train_idx=prepared["train_idx"],
+                        test_idx=prepared["test_idx"],
+                        title="PCA T2統計量",
+                        yaxis_title="T2",
+                        limit95=t2_limit95,
+                        limit99=t2_limit99,
+                    ),
+                    _build_monitoring_stat_figure(
+                        train_values=q_train,
+                        test_values=q_test,
+                        train_idx=prepared["train_idx"],
+                        test_idx=prepared["test_idx"],
+                        title="PCA Q統計量",
+                        yaxis_title="Q",
+                        limit95=q_limit95,
+                        limit99=q_limit99,
+                    ),
+                ]
+            )
+
+            metrics = pd.DataFrame(
+                [
+                    {
+                        "dataset": "train",
+                        "reconstruction_rmse": rmse_train,
+                        "t2_mean": float(np.mean(t2_train)),
+                        "t2_limit_99": _to_python_scalar(t2_limit99),
+                        "t2_alarm_rate_99": float(np.mean(t2_train > t2_limit99)) if np.isfinite(t2_limit99) else np.nan,
+                        "q_mean": float(np.mean(q_train)),
+                        "q_limit_99": _to_python_scalar(q_limit99),
+                        "q_alarm_rate_99": float(np.mean(q_train > q_limit99)) if np.isfinite(q_limit99) else np.nan,
+                    },
+                    {
+                        "dataset": "test",
+                        "reconstruction_rmse": rmse_test,
+                        "t2_mean": float(np.mean(t2_test)),
+                        "t2_limit_99": _to_python_scalar(t2_limit99),
+                        "t2_alarm_rate_99": float(np.mean(t2_test > t2_limit99)) if np.isfinite(t2_limit99) else np.nan,
+                        "q_mean": float(np.mean(q_test)),
+                        "q_limit_99": _to_python_scalar(q_limit99),
+                        "q_alarm_rate_99": float(np.mean(q_test > q_limit99)) if np.isfinite(q_limit99) else np.nan,
+                    },
+                ]
+            )
+
+            feature_sources = _transformed_feature_sources(preprocessor)
+            rotation = components.T @ np.diag(1.0 / safe_explained) @ components
+            t2_contrib_train = np.abs(x_train_scaled * (x_train_scaled @ rotation))
+            t2_contrib_test = np.abs(x_test_scaled * (x_test_scaled @ rotation))
+            q_contrib_train = residual_train**2
+            q_contrib_test = residual_test**2
+
+            all_index = pd.Index([*prepared["train_idx"], *prepared["test_idx"]])
+            t2_summary_df, t2_basis = _summarize_pca_contributions(
+                np.vstack([t2_contrib_train, t2_contrib_test]),
+                feature_sources,
+                all_index,
+                np.concatenate([t2_train, t2_test]),
+                t2_limit99,
+                label="T2",
+            )
+            q_summary_df, q_basis = _summarize_pca_contributions(
+                np.vstack([q_contrib_train, q_contrib_test]),
+                feature_sources,
+                all_index,
+                np.concatenate([q_train, q_test]),
+                q_limit99,
+                label="Q",
+            )
+
+            importance_tables.append({"title": "T2寄与度", "data": t2_summary_df})
+            importance_tables.append({"title": "Q寄与度", "data": q_summary_df})
+            importance_figures.append(
+                {
+                    "title": "T2寄与度",
+                    "figure": _importance_bar_figure(t2_summary_df, x_col="contribution", title=f"PCA T2寄与度: {t2_basis}"),
+                }
+            )
+            importance_figures.append(
+                {
+                    "title": "Q寄与度",
+                    "figure": _importance_bar_figure(q_summary_df, x_col="contribution", title=f"PCA Q寄与度: {q_basis}"),
+                }
+            )
+            extra_text_blocks.append(
+                {
+                    "title": "T2/Q 管理限界",
+                    "text": (
+                        f"T2 95%={t2_limit95:.6g}, 99%={t2_limit99:.6g}; "
+                        f"Q 95%={q_limit95:.6g}, 99%={q_limit99:.6g}. "
+                        "寄与度は前処理後の特徴量から元の変数単位へ集約し、99%閾値超過サンプル平均を優先して表示します。"
+                    ),
+                }
+            )
+            notes.append("PCA異常予兆検知では学習データから管理限界を算出し、T2/Q と寄与度で逸脱要因を可視化しています。")
     elif model_key == "unsup_ica":
         mixing = np.asarray(getattr(estimator, "mixing_", []), dtype=float)
         if mixing.ndim == 2 and mixing.size:
@@ -1581,7 +1966,7 @@ def _run_unsupervised_model(
         "model_label": model_label(model_key),
         "used_params": tuned_params,
         "metrics": metrics,
-        "figures": [score_fig, detail_fig],
+        "figures": figures,
         "notes": notes,
         "importance_tables": importance_tables,
         "importance_figures": importance_figures,
@@ -1616,7 +2001,7 @@ def _suggest_unsupervised_params(
     feature_count = int(x_scaled.shape[1])
     max_n = max(2, min(10, feature_count))
 
-    if model_key == "unsup_pca":
+    if model_key in {"unsup_pca", "unsup_pca_t2q"}:
         from sklearn.decomposition import PCA
 
         probe = PCA(n_components=min(feature_count, max_n), random_state=random_seed)
@@ -1809,7 +2194,7 @@ def _build_unsupervised_score_figure(
             hovertemplate="comp1=%{x:.4g}<br>comp2=%{y:.4g}<br>index=%{customdata}<extra>テスト</extra>",
         )
     )
-    title = "PCAスコア散布図" if model_key == "unsup_pca" else "ICAスコア散布図"
+    title = "PCAスコア散布図" if model_key in {"unsup_pca", "unsup_pca_t2q"} else "ICAスコア散布図"
     fig.update_layout(
         title=title,
         xaxis_title="第1成分",

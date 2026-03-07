@@ -5,15 +5,20 @@
 
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
+
 from src.model_runner import (
     default_hyperparam_grid_text,
     estimate_hyperparam_grid_combinations,
+    model_description,
     model_label,
     model_requires_target,
     normalize_cv_search_method,
     parse_param_grid_text,
     parse_param_text,
     recommended_randomized_n_iter,
+    run_model,
 )
 
 
@@ -55,6 +60,12 @@ def test_default_grid_text_and_logistic_label() -> None:
     assert "ロジスティック回帰" in model_label("cls_logistic")
 
 
+def test_model_description_contains_t2q_explanation() -> None:
+    description = model_description("unsup_pca_t2q")
+    assert "T2" in description
+    assert "Q" in description
+
+
 def test_estimate_hyperparam_grid_combinations() -> None:
     grid = {"a": [1, 2, 3], "b": [True, False]}
     assert estimate_hyperparam_grid_combinations(grid) == 6
@@ -70,3 +81,36 @@ def test_normalize_cv_search_method() -> None:
     assert normalize_cv_search_method("grid") == "grid"
     assert normalize_cv_search_method("randomized") == "randomized"
     assert normalize_cv_search_method("random") == "randomized"
+
+
+def test_unsup_pca_t2q_runs_and_returns_monitoring_outputs() -> None:
+    rng = np.random.default_rng(42)
+    df = pd.DataFrame(
+        {
+            "id": range(40),
+            "x1": rng.normal(0.0, 1.0, 40),
+            "x2": rng.normal(1.0, 0.5, 40),
+            "x3": rng.normal(-1.0, 0.8, 40),
+        }
+    )
+
+    result = run_model(
+        df,
+        model_key="unsup_pca_t2q",
+        feature_cols=["x1", "x2", "x3"],
+        target_col=None,
+        split_method="random",
+        train_ratio=0.7,
+        random_seed=123,
+        split_stratify_col=None,
+        split_order_col=None,
+        hyperparams={"n_components": 2},
+    )
+
+    assert result["task"] == "unsupervised"
+    assert result["model_label"] == "教師なし: PCA異常予兆検知 (T2/Q)"
+    assert len(result["figures"]) >= 4
+    titles = {item["title"] for item in result["importance_tables"]}
+    assert "T2寄与度" in titles
+    assert "Q寄与度" in titles
+

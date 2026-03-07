@@ -39,6 +39,7 @@ from .model_runner import (
     default_model_key,
     estimate_hyperparam_grid_combinations,
     format_param_text,
+    model_description,
     model_label,
     model_requires_target,
     model_task,
@@ -1397,6 +1398,15 @@ def register_callbacks(app: Dash) -> None:
             (not requires_target),
             help_text,
         )
+
+    @app.callback(
+        Output("model-method-help", "children"),
+        Input("model-method-dropdown", "value"),
+    )
+    def update_model_method_help(model_method: str | None) -> str:
+        """Render descriptive help text for selected model."""
+        model_key = str(model_method or default_model_key())
+        return model_description(model_key)
 
     @app.callback(
         Output("model-candidate-grid-text", "value"),

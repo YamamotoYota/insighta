@@ -9,6 +9,8 @@ from typing import Any
 
 from dash import dash_table, dcc, html
 
+from .model_runner import default_model_key, model_description, model_options
+
 
 def _graph_card_style(height: str) -> dict[str, str]:
     """Return resizable style for graph containers."""
@@ -675,20 +677,14 @@ def create_layout(
                                     html.Label("モデル手法"),
                                     dcc.Dropdown(
                                         id="model-method-dropdown",
-                                        options=[
-                                            {"label": "教師なし: PCA", "value": "unsup_pca"},
-                                            {"label": "教師なし: ICA", "value": "unsup_ica"},
-                                            {"label": "回帰: 重回帰", "value": "reg_linear"},
-                                            {"label": "回帰: PLS回帰", "value": "reg_pls"},
-                                            {"label": "回帰: LightGBM", "value": "reg_lgbm"},
-                                            {"label": "回帰: ランダムフォレスト", "value": "reg_rf"},
-                                            {"label": "分類: ロジスティック回帰", "value": "cls_logistic"},
-                                            {"label": "分類: LightGBM", "value": "cls_lgbm"},
-                                            {"label": "分類: 決定木", "value": "cls_tree"},
-                                            {"label": "分類: ランダムフォレスト", "value": "cls_rf"},
-                                        ],
-                                        value="reg_linear",
+                                        options=model_options(),
+                                        value=default_model_key(),
                                         clearable=False,
+                                    ),
+                                    html.Div(
+                                        model_description(default_model_key()),
+                                        id="model-method-help",
+                                        style={"marginTop": "8px", "fontSize": "0.92rem", "color": "#555"},
                                     ),
                                 ],
                                 style={"minWidth": "320px", "flex": "1"},

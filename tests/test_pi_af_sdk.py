@@ -15,6 +15,11 @@ def test_parse_name_list_accepts_newline_and_comma() -> None:
     assert tags == ("tag_a", "tag_b", "tag_c")
 
 
+def test_parse_name_list_accepts_full_width_delimiters_and_dedupes_casefold() -> None:
+    tags = parse_name_list("温度、圧力；温度\nＰＲＥＳＳＵＲＥ")
+    assert tags == ("温度", "圧力", "PRESSURE")
+
+
 def test_parse_tag_list_alias() -> None:
     tags = parse_tag_list("sinusoid\ncdt158")
     assert tags == ("sinusoid", "cdt158")
