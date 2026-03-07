@@ -135,51 +135,6 @@ def create_layout(
                 value=["show"],
                 style={"marginBottom": "8px"},
             ),
-            html.Div(
-                [
-                    html.H4("データテーブル"),
-                    html.Div(
-                        [
-                            dcc.Checklist(
-                                id="table-select-all-check",
-                                options=[{"label": "すべての行を一括選択", "value": "all"}],
-                                value=[],
-                                style={"marginBottom": "6px"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Button("CSV出力", id="export-table-csv-button", n_clicks=0),
-                                    html.Button("Excel出力", id="export-table-xlsx-button", n_clicks=0),
-                                    html.Div(id="export-table-status", style={"color": "#444"}),
-                                ],
-                                style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap"},
-                            ),
-                        ],
-                        style={"display": "flex", "justifyContent": "space-between", "gap": "12px", "flexWrap": "wrap"},
-                    ),
-                    dash_table.DataTable(
-                        id="data-table",
-                        columns=[],
-                        data=[],
-                        row_selectable="multi",
-                        selected_rows=[],
-                        selected_row_ids=[],
-                        filter_action="native",
-                        sort_action="native",
-                        page_action="none",
-                        style_table={
-                            "height": "420px",
-                            "overflowY": "auto",
-                            "overflowX": "auto",
-                            "minWidth": "100%",
-                        },
-                        style_cell={"fontSize": 12, "textAlign": "left", "maxWidth": 220},
-                    ),
-                    dcc.Download(id="download-table-file"),
-                ],
-                id="table-section",
-                style={"display": "block", "marginBottom": "12px"},
-            ),
             html.Details(
                 [
                     html.Summary("DB（SQL）から読み込む"),
@@ -508,6 +463,51 @@ def create_layout(
                 ],
                 style={"marginBottom": "12px"},
             ),
+            html.Div(
+                [
+                    html.H4("データテーブル"),
+                    html.Div(
+                        [
+                            dcc.Checklist(
+                                id="table-select-all-check",
+                                options=[{"label": "すべての行を一括選択", "value": "all"}],
+                                value=[],
+                                style={"marginBottom": "6px"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Button("CSV出力", id="export-table-csv-button", n_clicks=0),
+                                    html.Button("Excel出力", id="export-table-xlsx-button", n_clicks=0),
+                                    html.Div(id="export-table-status", style={"color": "#444"}),
+                                ],
+                                style={"display": "flex", "gap": "8px", "alignItems": "center", "flexWrap": "wrap"},
+                            ),
+                        ],
+                        style={"display": "flex", "justifyContent": "space-between", "gap": "12px", "flexWrap": "wrap"},
+                    ),
+                    dash_table.DataTable(
+                        id="data-table",
+                        columns=[],
+                        data=[],
+                        row_selectable="multi",
+                        selected_rows=[],
+                        selected_row_ids=[],
+                        filter_action="native",
+                        sort_action="native",
+                        page_action="none",
+                        style_table={
+                            "height": "420px",
+                            "overflowY": "auto",
+                            "overflowX": "auto",
+                            "minWidth": "100%",
+                        },
+                        style_cell={"fontSize": 12, "textAlign": "left", "maxWidth": 220},
+                    ),
+                    dcc.Download(id="download-table-file"),
+                ],
+                id="table-section",
+                style={"display": "block", "marginBottom": "12px"},
+            ),
             html.Details(
                 [
                     html.Summary("分析前処理の設定"),
@@ -740,6 +740,61 @@ def create_layout(
                         id="model-target-help",
                         children="教師なしモデルでは目的変数は使用しません。",
                         style={"marginTop": "6px", "color": "#444"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("主成分数決定の累積寄与率閾値 (%)"),
+                                    dcc.Input(
+                                        id="pca-component-threshold-percent-input",
+                                        type="number",
+                                        min=50,
+                                        max=99.9,
+                                        step=0.5,
+                                        value=90,
+                                        style={"width": "140px"},
+                                    ),
+                                ],
+                                style={"minWidth": "240px", "flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("T2/Q 注意管理限界 (%)"),
+                                    dcc.Input(
+                                        id="pca-warning-limit-percent-input",
+                                        type="number",
+                                        min=50,
+                                        max=99.9,
+                                        step=0.5,
+                                        value=95,
+                                        style={"width": "120px"},
+                                    ),
+                                ],
+                                style={"minWidth": "220px", "flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("T2/Q 異常管理限界 (%)"),
+                                    dcc.Input(
+                                        id="pca-alarm-limit-percent-input",
+                                        type="number",
+                                        min=50,
+                                        max=99.9,
+                                        step=0.5,
+                                        value=99,
+                                        style={"width": "120px"},
+                                    ),
+                                ],
+                                style={"minWidth": "220px", "flex": "1"},
+                            ),
+                            html.Div(
+                                "PCA異常予兆検知 (T2/Q) を選んだときのみ使用します。累積寄与率閾値は推奨主成分数の計算に使い、注意/異常管理限界は T2 と Q の閾値に使います。",
+                                style={"width": "100%", "marginTop": "4px", "fontSize": 12, "color": "#555"},
+                            ),
+                        ],
+                        id="pca-monitor-params-block",
+                        style={"display": "none", "gap": "10px", "flexWrap": "wrap", "marginTop": "8px"},
                     ),
                     html.Div(
                         [

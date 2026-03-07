@@ -397,6 +397,38 @@ def _split_method_label(method: str) -> str:
     return labels.get(method, method)
 
 
+def _normalize_percent_input(value: Any, *, default_value: float, min_value: float = 50.0, max_value: float = 99.9) -> float:
+    """Normalize UI percentage input into probability scale."""
+    try:
+        percent = float(value) if value is not None else default_value
+    except (TypeError, ValueError):
+        percent = default_value
+    percent = min(max(percent, min_value), max_value)
+    return float(percent / 100.0)
+
+
+def _pca_monitor_param_overrides(
+    model_key: str,
+    component_threshold_percent: Any,
+    warning_limit_percent: Any,
+    alarm_limit_percent: Any,
+) -> dict[str, Any]:
+    """Build PCA T2/Q specific parameter overrides from dedicated UI controls."""
+    if model_key != "unsup_pca_t2q":
+        return {}
+
+    warning_alpha = _normalize_percent_input(warning_limit_percent, default_value=95.0)
+    alarm_alpha = _normalize_percent_input(alarm_limit_percent, default_value=99.0)
+    if warning_alpha >= alarm_alpha:
+        warning_alpha = max(0.5, min(alarm_alpha - 0.01, warning_alpha))
+
+    return {
+        "component_selection_variance_threshold": _normalize_percent_input(component_threshold_percent, default_value=90.0),
+        "warning_limit_alpha": warning_alpha,
+        "alarm_limit_alpha": alarm_alpha,
+    }
+
+
 def _build_modeling_summary(metadata: dict[str, Any]) -> html.Div:
     """Render modeling preparation summary panel."""
     if not metadata:
@@ -1409,6 +1441,17 @@ def register_callbacks(app: Dash) -> None:
         return model_description(model_key)
 
     @app.callback(
+        Output("pca-monitor-params-block", "style"),
+        Input("model-method-dropdown", "value"),
+    )
+    def toggle_pca_monitor_params(model_method: str | None) -> dict[str, Any]:
+        """Show PCA T2/Q parameter controls only for the monitoring model."""
+        base_style = {"gap": "10px", "flexWrap": "wrap", "marginTop": "8px"}
+        if str(model_method or default_model_key()) == "unsup_pca_t2q":
+            return {**base_style, "display": "flex"}
+        return {**base_style, "display": "none"}
+
+    @app.callback(
         Output("model-candidate-grid-text", "value"),
         Input("model-method-dropdown", "value"),
     )
@@ -1499,6 +1542,9 @@ def register_callbacks(app: Dash) -> None:
         State("model-cv-sample-maxrows-input", "value"),
         State("model-candidate-grid-text", "value"),
         State("model-params-text", "value"),
+        State("pca-component-threshold-percent-input", "value"),
+        State("pca-warning-limit-percent-input", "value"),
+        State("pca-alarm-limit-percent-input", "value"),
         prevent_initial_call=True,
     )
     def suggest_model_hyperparams(
@@ -1516,11 +1562,20 @@ def register_callbacks(app: Dash) -> None:
         cv_sample_max_rows: int | float | None,
         candidate_grid_text: str | None,
         current_param_text: str | None,
+        component_threshold_percent: Any,
+        warning_limit_percent: Any,
+        alarm_limit_percent: Any,
     ) -> tuple[str | Any, str]:
         if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
             return no_update, "先にデータを読み込んでください。"
 
         model_key = str(model_method or default_model_key())
+        pca_overrides = _pca_monitor_param_overrides(
+            model_key,
+            component_threshold_percent,
+            warning_limit_percent,
+            alarm_limit_percent,
+        )
         candidate_grid, candidate_grid_error = parse_param_grid_text(candidate_grid_text)
         if candidate_grid_error:
             return no_update, candidate_grid_error
@@ -1545,6 +1600,7 @@ def register_callbacks(app: Dash) -> None:
                 cv_search_method=cv_search_method,
                 cv_sample_ratio=cv_sample_ratio,
                 cv_sample_max_rows=cv_sample_max_rows,
+                preset_params=pca_overrides,
             )
             return format_param_text(suggested), f"{model_label(model_key)} 推奨値: {summary}"
         except Exception as exc:
@@ -1564,6 +1620,9 @@ def register_callbacks(app: Dash) -> None:
         State("model-target-dropdown", "value"),
         State("model-features-dropdown", "value"),
         State("model-params-text", "value"),
+        State("pca-component-threshold-percent-input", "value"),
+        State("pca-warning-limit-percent-input", "value"),
+        State("pca-alarm-limit-percent-input", "value"),
         prevent_initial_call=True,
     )
     def execute_modeling(
@@ -1576,6 +1635,9 @@ def register_callbacks(app: Dash) -> None:
         target_col: str | None,
         feature_cols: list[str] | None,
         param_text: str | None,
+        component_threshold_percent: Any,
+        warning_limit_percent: Any,
+        alarm_limit_percent: Any,
     ) -> tuple[html.Div, str, dict[str, Any]]:
         trigger = callback_context.triggered_id
         if trigger == "current-data-store":
@@ -1588,6 +1650,15 @@ def register_callbacks(app: Dash) -> None:
         params, parse_error = parse_param_text(param_text)
         if parse_error:
             return html.Div(), parse_error, no_update
+
+        params.update(
+            _pca_monitor_param_overrides(
+                model_key,
+                component_threshold_percent,
+                warning_limit_percent,
+                alarm_limit_percent,
+            )
+        )
 
         try:
             runtime_df = _prepare_modeling_runtime_dataframe(current_data, ui_config, selected_ids)

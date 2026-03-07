@@ -31,7 +31,7 @@ MODEL_DEFINITIONS: dict[str, dict[str, str]] = {
     "unsup_pca_t2q": {
         "task": "unsupervised",
         "label": "教師なし: PCA異常予兆検知 (T2/Q)",
-        "description": "学習データで PCA を作成し、主成分空間の逸脱を T2、再構成残差を Q として監視します。99%管理限界と寄与度を表示します。",
+        "description": "学習データで PCA を作成し、主成分空間の逸脱を T2、再構成残差を Q として監視します。累積寄与率閾値と注意/異常管理限界はユーザーが設定できます。",
     },
     "unsup_ica": {
         "task": "unsupervised",
@@ -246,6 +246,32 @@ def model_requires_target(model_key: str) -> bool:
     return model_task(model_key) in {"regression", "classification"}
 
 
+def _normalize_probability_param(value: Any, default_value: float) -> float:
+    """Normalize probability-like hyperparameter into (0, 1)."""
+    try:
+        parsed = float(value) if value is not None else float(default_value)
+    except (TypeError, ValueError):
+        parsed = float(default_value)
+    return float(min(max(parsed, 0.5), 0.999))
+
+
+def _normalize_monitoring_alphas(warning_alpha: float, alarm_alpha: float) -> tuple[float, float]:
+    """Ensure warning/alarm monitoring limits are ordered and valid."""
+    warning = _normalize_probability_param(warning_alpha, 0.95)
+    alarm = _normalize_probability_param(alarm_alpha, 0.99)
+    if warning >= alarm:
+        warning = max(0.5, min(alarm - 0.01, warning))
+    return warning, alarm
+
+
+def _format_percent_label(probability: float) -> str:
+    """Format probability as percent text for UI labels."""
+    percent = float(probability) * 100.0
+    if abs(percent - round(percent)) < 1e-9:
+        return f"{int(round(percent))}%"
+    return f"{percent:.1f}%"
+
+
 def parse_param_text(text: str | None) -> tuple[dict[str, Any], str | None]:
     """Parse user input JSON text for hyperparameters."""
     raw = (text or "").strip()
@@ -308,7 +334,12 @@ def default_hyperparams(model_key: str) -> dict[str, Any]:
     """Return default hyperparameters for each model."""
     defaults: dict[str, dict[str, Any]] = {
         "unsup_pca": {"n_components": 2},
-        "unsup_pca_t2q": {"n_components": 2},
+        "unsup_pca_t2q": {
+            "n_components": 2,
+            "component_selection_variance_threshold": 0.90,
+            "warning_limit_alpha": 0.95,
+            "alarm_limit_alpha": 0.99,
+        },
         "unsup_ica": {"n_components": 2, "max_iter": 500, "tol": 1e-4},
         "reg_linear": {"fit_intercept": True},
         "reg_pls": {"n_components": 2, "max_iter": 500},
@@ -376,6 +407,7 @@ def suggest_hyperparameters(
     cv_search_method: str | None = "grid",
     cv_sample_ratio: float | int | None = 1.0,
     cv_sample_max_rows: int | float | None = None,
+    preset_params: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Suggest hyperparameters from training data.
 
@@ -401,6 +433,7 @@ def suggest_hyperparameters(
             model_key,
             prepared["x_train"],
             random_seed=prepared["random_seed"],
+            params=preset_params,
         )
         return params, summary
 
@@ -776,6 +809,13 @@ def _build_estimator(model_key: str, params: dict[str, Any], *, random_seed: int
     """Instantiate estimator from model key."""
     merged = default_hyperparams(model_key)
     merged.update(params)
+    if model_key == "unsup_pca_t2q":
+        for transient_key in (
+            "component_selection_variance_threshold",
+            "warning_limit_alpha",
+            "alarm_limit_alpha",
+        ):
+            merged.pop(transient_key, None)
     if model_key in {"reg_rf", "cls_rf", "cls_tree", "reg_lgbm", "cls_lgbm", "unsup_pca", "unsup_pca_t2q", "unsup_ica"}:
         merged.setdefault("random_state", random_seed)
 
@@ -1625,8 +1665,10 @@ def _build_monitoring_stat_figure(
     test_idx: pd.Index,
     title: str,
     yaxis_title: str,
-    limit95: float,
-    limit99: float,
+    warning_limit: float,
+    alarm_limit: float,
+    warning_label: str,
+    alarm_label: str,
 ) -> go.Figure:
     """Build monitoring chart for train/test statistics."""
     train_values = np.asarray(train_values, dtype=float).reshape(-1)
@@ -1660,23 +1702,23 @@ def _build_monitoring_stat_figure(
         )
     )
 
-    if np.isfinite(limit95):
+    if np.isfinite(warning_limit):
         fig.add_trace(
             go.Scatter(
                 x=[0, max(train_values.size + test_values.size - 1, 0)],
-                y=[limit95, limit95],
+                y=[warning_limit, warning_limit],
                 mode="lines",
-                name="95%管理限界",
+                name=warning_label,
                 line={"color": "#9c755f", "dash": "dot"},
             )
         )
-    if np.isfinite(limit99):
+    if np.isfinite(alarm_limit):
         fig.add_trace(
             go.Scatter(
                 x=[0, max(train_values.size + test_values.size - 1, 0)],
-                y=[limit99, limit99],
+                y=[alarm_limit, alarm_limit],
                 mode="lines",
-                name="99%管理限界",
+                name=alarm_label,
                 line={"color": "#e45756", "dash": "dash"},
             )
         )
@@ -1699,9 +1741,10 @@ def _summarize_pca_contributions(
     feature_sources: list[str],
     sample_index: pd.Index,
     stat_values: np.ndarray,
-    limit99: float,
+    alarm_limit: float,
     *,
     label: str,
+    alarm_label: str,
 ) -> tuple[pd.DataFrame, str]:
     """Summarize PCA monitoring contributions by feature."""
     frame = _aggregate_contribution_frame(contrib_values, feature_sources)
@@ -1709,11 +1752,11 @@ def _summarize_pca_contributions(
         return pd.DataFrame(columns=["feature", "contribution", "basis"]), f"{label} 寄与度を計算できませんでした。"
 
     stats = np.asarray(stat_values, dtype=float).reshape(-1)
-    alarm_mask = stats > float(limit99) if np.isfinite(limit99) else np.zeros(frame.shape[0], dtype=bool)
+    alarm_mask = stats > float(alarm_limit) if np.isfinite(alarm_limit) else np.zeros(frame.shape[0], dtype=bool)
 
     if alarm_mask.any():
         summary = frame.loc[alarm_mask].mean(axis=0)
-        basis = f"{label} 99%閾値超過平均 ({int(alarm_mask.sum())}件)"
+        basis = f"{label} {alarm_label}閾値超過平均 ({int(alarm_mask.sum())}件)"
     else:
         sample_pos = int(np.nanargmax(stats)) if stats.size else 0
         summary = frame.iloc[sample_pos]
@@ -1828,16 +1871,30 @@ def _run_unsupervised_model(
             importance_figures.append({"title": "Loadingの2乗 ヒートマップ", "figure": heat})
 
         if model_key == "unsup_pca_t2q" and components.ndim == 2 and components.size and explained.size:
+            variance_threshold = _normalize_probability_param(
+                params.get("component_selection_variance_threshold"),
+                0.90,
+            )
+            warning_alpha, alarm_alpha = _normalize_monitoring_alphas(
+                params.get("warning_limit_alpha", 0.95),
+                params.get("alarm_limit_alpha", 0.99),
+            )
+            tuned_params["component_selection_variance_threshold"] = variance_threshold
+            tuned_params["warning_limit_alpha"] = warning_alpha
+            tuned_params["alarm_limit_alpha"] = alarm_alpha
+
+            warning_label = f"{_format_percent_label(warning_alpha)}管理限界"
+            alarm_label = f"{_format_percent_label(alarm_alpha)}管理限界"
             safe_explained = np.where(explained > 1e-12, explained, 1e-12)
             t2_train = np.sum((score_train**2) / safe_explained.reshape(1, -1), axis=1)
             t2_test = np.sum((score_test**2) / safe_explained.reshape(1, -1), axis=1)
             q_train = np.sum(residual_train**2, axis=1)
             q_test = np.sum(residual_test**2, axis=1)
 
-            t2_limit95 = _hotelling_t2_limit(x_train_scaled.shape[0], n_components, 0.95)
-            t2_limit99 = _hotelling_t2_limit(x_train_scaled.shape[0], n_components, 0.99)
-            q_limit95 = _jackson_q_limit(x_train_scaled, n_components, 0.95)
-            q_limit99 = _jackson_q_limit(x_train_scaled, n_components, 0.99)
+            t2_warning_limit = _hotelling_t2_limit(x_train_scaled.shape[0], n_components, warning_alpha)
+            t2_alarm_limit = _hotelling_t2_limit(x_train_scaled.shape[0], n_components, alarm_alpha)
+            q_warning_limit = _jackson_q_limit(x_train_scaled, n_components, warning_alpha)
+            q_alarm_limit = _jackson_q_limit(x_train_scaled, n_components, alarm_alpha)
 
             figures.extend(
                 [
@@ -1848,8 +1905,10 @@ def _run_unsupervised_model(
                         test_idx=prepared["test_idx"],
                         title="PCA T2統計量",
                         yaxis_title="T2",
-                        limit95=t2_limit95,
-                        limit99=t2_limit99,
+                        warning_limit=t2_warning_limit,
+                        alarm_limit=t2_alarm_limit,
+                        warning_label=warning_label,
+                        alarm_label=alarm_label,
                     ),
                     _build_monitoring_stat_figure(
                         train_values=q_train,
@@ -1858,8 +1917,10 @@ def _run_unsupervised_model(
                         test_idx=prepared["test_idx"],
                         title="PCA Q統計量",
                         yaxis_title="Q",
-                        limit95=q_limit95,
-                        limit99=q_limit99,
+                        warning_limit=q_warning_limit,
+                        alarm_limit=q_alarm_limit,
+                        warning_label=warning_label,
+                        alarm_label=alarm_label,
                     ),
                 ]
             )
@@ -1869,22 +1930,32 @@ def _run_unsupervised_model(
                     {
                         "dataset": "train",
                         "reconstruction_rmse": rmse_train,
+                        "variance_threshold": variance_threshold,
+                        "warning_limit_percent": warning_alpha * 100.0,
+                        "alarm_limit_percent": alarm_alpha * 100.0,
                         "t2_mean": float(np.mean(t2_train)),
-                        "t2_limit_99": _to_python_scalar(t2_limit99),
-                        "t2_alarm_rate_99": float(np.mean(t2_train > t2_limit99)) if np.isfinite(t2_limit99) else np.nan,
+                        "t2_warning_limit": _to_python_scalar(t2_warning_limit),
+                        "t2_alarm_limit": _to_python_scalar(t2_alarm_limit),
+                        "t2_alarm_rate": float(np.mean(t2_train > t2_alarm_limit)) if np.isfinite(t2_alarm_limit) else np.nan,
                         "q_mean": float(np.mean(q_train)),
-                        "q_limit_99": _to_python_scalar(q_limit99),
-                        "q_alarm_rate_99": float(np.mean(q_train > q_limit99)) if np.isfinite(q_limit99) else np.nan,
+                        "q_warning_limit": _to_python_scalar(q_warning_limit),
+                        "q_alarm_limit": _to_python_scalar(q_alarm_limit),
+                        "q_alarm_rate": float(np.mean(q_train > q_alarm_limit)) if np.isfinite(q_alarm_limit) else np.nan,
                     },
                     {
                         "dataset": "test",
                         "reconstruction_rmse": rmse_test,
+                        "variance_threshold": variance_threshold,
+                        "warning_limit_percent": warning_alpha * 100.0,
+                        "alarm_limit_percent": alarm_alpha * 100.0,
                         "t2_mean": float(np.mean(t2_test)),
-                        "t2_limit_99": _to_python_scalar(t2_limit99),
-                        "t2_alarm_rate_99": float(np.mean(t2_test > t2_limit99)) if np.isfinite(t2_limit99) else np.nan,
+                        "t2_warning_limit": _to_python_scalar(t2_warning_limit),
+                        "t2_alarm_limit": _to_python_scalar(t2_alarm_limit),
+                        "t2_alarm_rate": float(np.mean(t2_test > t2_alarm_limit)) if np.isfinite(t2_alarm_limit) else np.nan,
                         "q_mean": float(np.mean(q_test)),
-                        "q_limit_99": _to_python_scalar(q_limit99),
-                        "q_alarm_rate_99": float(np.mean(q_test > q_limit99)) if np.isfinite(q_limit99) else np.nan,
+                        "q_warning_limit": _to_python_scalar(q_warning_limit),
+                        "q_alarm_limit": _to_python_scalar(q_alarm_limit),
+                        "q_alarm_rate": float(np.mean(q_test > q_alarm_limit)) if np.isfinite(q_alarm_limit) else np.nan,
                     },
                 ]
             )
@@ -1902,16 +1973,18 @@ def _run_unsupervised_model(
                 feature_sources,
                 all_index,
                 np.concatenate([t2_train, t2_test]),
-                t2_limit99,
+                t2_alarm_limit,
                 label="T2",
+                alarm_label=_format_percent_label(alarm_alpha),
             )
             q_summary_df, q_basis = _summarize_pca_contributions(
                 np.vstack([q_contrib_train, q_contrib_test]),
                 feature_sources,
                 all_index,
                 np.concatenate([q_train, q_test]),
-                q_limit99,
+                q_alarm_limit,
                 label="Q",
+                alarm_label=_format_percent_label(alarm_alpha),
             )
 
             importance_tables.append({"title": "T2寄与度", "data": t2_summary_df})
@@ -1932,9 +2005,10 @@ def _run_unsupervised_model(
                 {
                     "title": "T2/Q 管理限界",
                     "text": (
-                        f"T2 95%={t2_limit95:.6g}, 99%={t2_limit99:.6g}; "
-                        f"Q 95%={q_limit95:.6g}, 99%={q_limit99:.6g}. "
-                        "寄与度は前処理後の特徴量から元の変数単位へ集約し、99%閾値超過サンプル平均を優先して表示します。"
+                        f"主成分数決定の累積寄与率閾値={_format_percent_label(variance_threshold)}. "
+                        f"T2 {warning_label}={t2_warning_limit:.6g}, {alarm_label}={t2_alarm_limit:.6g}; "
+                        f"Q {warning_label}={q_warning_limit:.6g}, {alarm_label}={q_alarm_limit:.6g}. "
+                        f"寄与度は前処理後の特徴量から元の変数単位へ集約し、{_format_percent_label(alarm_alpha)}閾値超過サンプル平均を優先して表示します。"
                     ),
                 }
             )
@@ -1994,6 +2068,7 @@ def _suggest_unsupervised_params(
     x_train: pd.DataFrame,
     *,
     random_seed: int,
+    params: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Suggest unsupervised hyperparameters by train split heuristics."""
     preprocessor = _build_feature_preprocessor(x_train)
@@ -2004,14 +2079,28 @@ def _suggest_unsupervised_params(
     if model_key in {"unsup_pca", "unsup_pca_t2q"}:
         from sklearn.decomposition import PCA
 
+        preset = dict(params or {})
+        variance_threshold = _normalize_probability_param(preset.get("component_selection_variance_threshold"), 0.90)
         probe = PCA(n_components=min(feature_count, max_n), random_state=random_seed)
         probe.fit(x_scaled)
         cum = np.cumsum(np.asarray(probe.explained_variance_ratio_, dtype=float))
-        target_n = int(np.searchsorted(cum, 0.90) + 1)
+        target_n = int(np.searchsorted(cum, variance_threshold) + 1)
         target_n = min(max(2, target_n), max_n)
-        params = {"n_components": target_n}
-        summary = f"PCA提案: 累積寄与率90%到達で n_components={target_n}"
-        return params, summary
+        suggested = {"n_components": target_n}
+        if model_key == "unsup_pca_t2q":
+            warning_alpha, alarm_alpha = _normalize_monitoring_alphas(
+                preset.get("warning_limit_alpha", 0.95),
+                preset.get("alarm_limit_alpha", 0.99),
+            )
+            suggested.update(
+                {
+                    "component_selection_variance_threshold": variance_threshold,
+                    "warning_limit_alpha": warning_alpha,
+                    "alarm_limit_alpha": alarm_alpha,
+                }
+            )
+        summary = f"PCA提案: 累積寄与率{_format_percent_label(variance_threshold)}到達で n_components={target_n}"
+        return suggested, summary
 
     from sklearn.decomposition import FastICA
 
