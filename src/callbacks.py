@@ -407,25 +407,33 @@ def _normalize_percent_input(value: Any, *, default_value: float, min_value: flo
     return float(percent / 100.0)
 
 
+def _normalize_positive_input(value: Any, *, default_value: float, min_value: float = 1.0) -> float:
+    """Normalize UI numeric input into a positive scalar."""
+    try:
+        parsed = float(value) if value is not None else default_value
+    except (TypeError, ValueError):
+        parsed = default_value
+    return float(max(parsed, min_value))
+
+
 def _pca_monitor_param_overrides(
     model_key: str,
     component_threshold_percent: Any,
-    warning_limit_percent: Any,
-    alarm_limit_percent: Any,
+    t2_warning_limit_percent: Any,
+    t2_alarm_limit_percent: Any,
+    q_warning_limit_percent: Any,
+    q_alarm_limit_percent: Any,
 ) -> dict[str, Any]:
     """Build PCA T2/Q specific parameter overrides from dedicated UI controls."""
     if model_key != "unsup_pca_t2q":
         return {}
 
-    warning_alpha = _normalize_percent_input(warning_limit_percent, default_value=95.0)
-    alarm_alpha = _normalize_percent_input(alarm_limit_percent, default_value=99.0)
-    if warning_alpha >= alarm_alpha:
-        warning_alpha = max(0.5, min(alarm_alpha - 0.01, warning_alpha))
-
     return {
         "component_selection_variance_threshold": _normalize_percent_input(component_threshold_percent, default_value=90.0),
-        "warning_limit_alpha": warning_alpha,
-        "alarm_limit_alpha": alarm_alpha,
+        "t2_warning_limit_percent": _normalize_positive_input(t2_warning_limit_percent, default_value=95.0),
+        "t2_alarm_limit_percent": _normalize_positive_input(t2_alarm_limit_percent, default_value=99.0),
+        "q_warning_limit_percent": _normalize_positive_input(q_warning_limit_percent, default_value=95.0),
+        "q_alarm_limit_percent": _normalize_positive_input(q_alarm_limit_percent, default_value=99.0),
     }
 
 
@@ -1543,8 +1551,10 @@ def register_callbacks(app: Dash) -> None:
         State("model-candidate-grid-text", "value"),
         State("model-params-text", "value"),
         State("pca-component-threshold-percent-input", "value"),
-        State("pca-warning-limit-percent-input", "value"),
-        State("pca-alarm-limit-percent-input", "value"),
+        State("pca-t2-warning-limit-input", "value"),
+        State("pca-t2-alarm-limit-input", "value"),
+        State("pca-q-warning-limit-input", "value"),
+        State("pca-q-alarm-limit-input", "value"),
         prevent_initial_call=True,
     )
     def suggest_model_hyperparams(
@@ -1563,8 +1573,10 @@ def register_callbacks(app: Dash) -> None:
         candidate_grid_text: str | None,
         current_param_text: str | None,
         component_threshold_percent: Any,
-        warning_limit_percent: Any,
-        alarm_limit_percent: Any,
+        t2_warning_limit_percent: Any,
+        t2_alarm_limit_percent: Any,
+        q_warning_limit_percent: Any,
+        q_alarm_limit_percent: Any,
     ) -> tuple[str | Any, str]:
         if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
             return no_update, "先にデータを読み込んでください。"
@@ -1573,8 +1585,10 @@ def register_callbacks(app: Dash) -> None:
         pca_overrides = _pca_monitor_param_overrides(
             model_key,
             component_threshold_percent,
-            warning_limit_percent,
-            alarm_limit_percent,
+            t2_warning_limit_percent,
+            t2_alarm_limit_percent,
+            q_warning_limit_percent,
+            q_alarm_limit_percent,
         )
         candidate_grid, candidate_grid_error = parse_param_grid_text(candidate_grid_text)
         if candidate_grid_error:
@@ -1621,8 +1635,10 @@ def register_callbacks(app: Dash) -> None:
         State("model-features-dropdown", "value"),
         State("model-params-text", "value"),
         State("pca-component-threshold-percent-input", "value"),
-        State("pca-warning-limit-percent-input", "value"),
-        State("pca-alarm-limit-percent-input", "value"),
+        State("pca-t2-warning-limit-input", "value"),
+        State("pca-t2-alarm-limit-input", "value"),
+        State("pca-q-warning-limit-input", "value"),
+        State("pca-q-alarm-limit-input", "value"),
         prevent_initial_call=True,
     )
     def execute_modeling(
@@ -1636,8 +1652,10 @@ def register_callbacks(app: Dash) -> None:
         feature_cols: list[str] | None,
         param_text: str | None,
         component_threshold_percent: Any,
-        warning_limit_percent: Any,
-        alarm_limit_percent: Any,
+        t2_warning_limit_percent: Any,
+        t2_alarm_limit_percent: Any,
+        q_warning_limit_percent: Any,
+        q_alarm_limit_percent: Any,
     ) -> tuple[html.Div, str, dict[str, Any]]:
         trigger = callback_context.triggered_id
         if trigger == "current-data-store":
@@ -1655,8 +1673,10 @@ def register_callbacks(app: Dash) -> None:
             _pca_monitor_param_overrides(
                 model_key,
                 component_threshold_percent,
-                warning_limit_percent,
-                alarm_limit_percent,
+                t2_warning_limit_percent,
+                t2_alarm_limit_percent,
+                q_warning_limit_percent,
+                q_alarm_limit_percent,
             )
         )
 
@@ -1677,6 +1697,7 @@ def register_callbacks(app: Dash) -> None:
                 split_stratify_col=(cfg.get("split_stratify_col") or None),
                 split_order_col=(cfg.get("split_order_col") or None),
                 hyperparams=params,
+                selected_ids=selected_ids,
             )
             artifact_bundle = result.get("artifact_bundle")
             if not isinstance(artifact_bundle, dict):

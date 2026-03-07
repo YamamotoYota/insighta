@@ -760,13 +760,12 @@ def create_layout(
                             ),
                             html.Div(
                                 [
-                                    html.Label("T2/Q 注意管理限界 (%)"),
+                                    html.Label("T2 注意管理限界 (%)"),
                                     dcc.Input(
-                                        id="pca-warning-limit-percent-input",
+                                        id="pca-t2-warning-limit-input",
                                         type="number",
-                                        min=50,
-                                        max=99.9,
-                                        step=0.5,
+                                        min=1,
+                                        step=1,
                                         value=95,
                                         style={"width": "120px"},
                                     ),
@@ -775,13 +774,12 @@ def create_layout(
                             ),
                             html.Div(
                                 [
-                                    html.Label("T2/Q 異常管理限界 (%)"),
+                                    html.Label("T2 異常管理限界 (%)"),
                                     dcc.Input(
-                                        id="pca-alarm-limit-percent-input",
+                                        id="pca-t2-alarm-limit-input",
                                         type="number",
-                                        min=50,
-                                        max=99.9,
-                                        step=0.5,
+                                        min=1,
+                                        step=1,
                                         value=99,
                                         style={"width": "120px"},
                                     ),
@@ -789,7 +787,35 @@ def create_layout(
                                 style={"minWidth": "220px", "flex": "1"},
                             ),
                             html.Div(
-                                "PCA異常予兆検知 (T2/Q) を選んだときのみ使用します。累積寄与率閾値は推奨主成分数の計算に使い、注意/異常管理限界は T2 と Q の閾値に使います。",
+                                [
+                                    html.Label("Q 注意管理限界 (%)"),
+                                    dcc.Input(
+                                        id="pca-q-warning-limit-input",
+                                        type="number",
+                                        min=1,
+                                        step=1,
+                                        value=95,
+                                        style={"width": "120px"},
+                                    ),
+                                ],
+                                style={"minWidth": "220px", "flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Q 異常管理限界 (%)"),
+                                    dcc.Input(
+                                        id="pca-q-alarm-limit-input",
+                                        type="number",
+                                        min=1,
+                                        step=1,
+                                        value=99,
+                                        style={"width": "120px"},
+                                    ),
+                                ],
+                                style={"minWidth": "220px", "flex": "1"},
+                            ),
+                            html.Div(
+                                "PCA異常予兆検知 (T2/Q) を選んだときのみ使用します。累積寄与率閾値は推奨主成分数の計算に使います。T2/Q の各管理限界は百分率入力です。100未満はその百分位で学習データから閾値を計算し、100以上は 90% 閾値を基準に倍率換算します（例: 180% -> 90% 閾値の 2 倍）。",
                                 style={"width": "100%", "marginTop": "4px", "fontSize": 12, "color": "#555"},
                             ),
                         ],
