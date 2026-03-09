@@ -1,464 +1,456 @@
+<!-- Copyright (c) 2026 Yota Yamamoto -->
+<!-- SPDX-License-Identifier: MIT -->
+
 ## License / ライセンス
 
-このリポジトリは MIT License で公開します。
-著作権者（Author / Copyright Holder）は **Yota Yamamoto** です。
+このリポジトリは MIT License で公開しています。
+著作権者は **Yota Yamamoto** です。
 
 - ライセンス本文: `LICENSE`
 - SPDX: `MIT`
 
 # INSIGHTA
 
-INSIGHTA は、データを多様なグラフで描画しながら GUI 上でサンプル（行）を選択し、特徴や差分を探索するためのブラウザ型 EDA / モデリング支援ツールです。  
-Plotly Dash を使ってローカルPCで動作します。
+INSIGHTA は、データを読み込み、データテーブルと複数グラフを行き来しながらサンプルを選択し、特徴・差分・異常兆候・モデル性能を探索するためのローカル実行型アプリです。  
+UI は Plotly Dash、配布は PyInstaller に対応しています。
 
-## 1. できること
+## 1. 何ができるか
 
-- データ読み込み
-  - CSV (`.csv`)
-  - Excel (`.xlsx`, `.xls`, `.xlsm`)
-  - SQL DBMS（接続してテーブル一覧取得・SQL実行）
-    - SQL Server
-    - MySQL
-    - SQLite
-    - Oracle Database
-    - PostgreSQL
-  - PI AF SDK（PI DataLink相当）
-    - PI DAタグ（Snapshot / Recorded / Interpolated / Summary）
-    - PI AF属性データ（エレメント名 + 属性名で取得。時刻を行、属性を列にした横持ちテーブル）
-    - PI AFイベントフレーム（テンプレート + 対象期間 + イベント生成分析で取得）
-- EDA（対話的可視化）
-  - 散布図 / ヒストグラム / 箱ひげ図 / 散布図行列
-  - データテーブル（フィルタ・ソート・複数行選択）
-  - グラフ選択とテーブル選択の連動（リンクドブラッシング）
-  - 別ウィンドウでグラフ表示（選択状態を共有）
-- データ前処理（GUI）
-  - 列型の手動変更（変換不可値は欠損化）
-  - 欠損行除外
-  - 選択中データを欠損扱い（外れ値扱い）
-  - タイムラグ列追加
-  - 特徴量追加（四則演算 / `log()` / `exp()`）
-- 統計モデリング
-  - 学習/テスト分割（ランダム / 層別ランダム / 前後）
-  - 学習データ基準の標準化
-  - 教師なし: PCA / PCA異常予兆検知（T2/Q） / ICA
-  - 回帰: 重回帰 / PLS回帰 / LightGBM / ランダムフォレスト回帰
-  - 分類: ロジスティック回帰 / LightGBM / 決定木 / ランダムフォレスト
-  - 学習データCVによるハイパーパラメータ推奨（最終値はユーザーが決定）
-  - 学習済みモデルの保存 / 再読込（`joblib`）
-- 結果可視化
-  - 回帰: 実測値 vs 予測値重ね合わせ / yyプロット / `R2`, `RMSE`, `MAE`
-  - 分類: 混同行列 / ROC / `AUC`
-  - 変数重要度・異常寄与度（モデル別）
-- 出力
-  - 加工・分析後のデータテーブルを CSV / Excel 出力
+### データ読み込み
+- CSV
+- Excel (`.xlsx`, `.xls`, `.xlsm`)
+- SQL データベース
+  - SQL Server
+  - MySQL
+  - SQLite
+  - Oracle Database
+  - PostgreSQL
+- PI データ
+  - PI DA タグ
+  - PI AF 属性
+  - PI AF イベントフレーム
 
-## 2. 画面の考え方
+### 探索的データ解析（EDA）
+- データテーブルのフィルタ、ソート、複数行選択
+- 散布図、ヒストグラム、箱ひげ図、散布図行列
+- グラフとテーブルのリンクドブラッシング
+- グラフの別ウィンドウ表示
+- 選択群と非選択群の比較サマリ、原因候補ランキング
 
-- 上部: データ読み込み、グラフ設定表示、選択クリア
-- データテーブル: CSV/Excel、SQL、PI などすべてのデータ読み込みセクションの直下に配置し、常に分析対象データを確認（フィルタ/ソート/選択）
-- 分析前処理の設定: 列型・欠損/外れ値扱い
-- 統計モデリング共通設定: 特徴量追加 → 分割/標準化
-- 統計モデリング実行: モデル選択、CV推奨、学習・評価、モデル保存/再読込
-- グラフ設定/表示: 別ウィンドウで開いても選択状態を共有
+### データ前処理
+- 列型の自動判定と手動上書き
+- 欠損値行の除外
+- 選択中サンプルを欠損扱いにする外れ値除外
+- タイムラグ列追加
+- 特徴量追加（四則演算、`log()`、`exp()`）
+- 学習データ基準の標準化
+- 学習用 / テスト用データ分割
 
-## 3. 必要環境
+### モデリング
+- 教師なし学習
+  - PCA
+  - PCA 異常予兆検知（T2 / Q）
+  - ICA
+- 回帰
+  - 重回帰
+  - PLS 回帰
+  - LightGBM 回帰
+  - ランダムフォレスト回帰
+- 分類
+  - ロジスティック回帰
+  - LightGBM 分類
+  - 決定木分類
+  - ランダムフォレスト分類
+- 学習済みモデルの保存 / 再読込
+- CV による推奨ハイパーパラメータ計算
 
+### 結果可視化
+- 回帰: 実測値と予測値の重ね合わせ、yy プロット、`R2`、`RMSE`、`MAE`
+- 分類: 混同行列、ROC、`AUC`
+- 重要度 / 寄与度
+  - 回帰係数、VIP、Permutation importance、Gain importance、SHAP など
+  - PCA: Loading の 2 乗
+  - PCA 異常予兆検知: T2 寄与度、Q 寄与度
+
+## 2. リポジトリ構成
+
+```text
+INSIGHTA/
+├─ app.py
+├─ INSIGHTA.spec
+├─ README.md
+├─ BUILD_WINDOWS.md
+├─ LICENSE
+├─ requirements.txt
+├─ assets/
+├─ data/
+├─ release/
+│  └─ INSIGHTA/
+│     ├─ INSIGHTA.exe
+│     └─ README.md
+├─ src/
+│  ├─ callbacks.py
+│  ├─ data_io.py
+│  ├─ db_connectors.py
+│  ├─ figures.py
+│  ├─ layout.py
+│  ├─ model_runner.py
+│  ├─ modeling.py
+│  ├─ pi_af_sdk.py
+│  ├─ preprocess.py
+│  ├─ ranking.py
+│  ├─ state.py
+│  └─ utils.py
+└─ tests/
+```
+
+## 3. 動作環境
+
+### 開発 / ソースコード実行
 - Python 3.11 以上
-- Windows（確認環境）
-  - 他OSでも理論上動作しますが、SQL Server 接続まわり（ODBC/driver）は環境依存があります
+- Windows 64bit を主対象として確認
+- ブラウザ: Edge / Chrome 推奨
+
+### 配布版
+- Windows 64bit
+- Python の事前インストール不要
+
+補足:
+- SQL Server 接続には ODBC Driver が必要です。
+- PI AF / PI DA 取得には PI AF Client と AF SDK が必要です。
+- PI 系機能は Windows 前提です。
 
 ## 4. セットアップ
 
-### 4.1 仮想環境（venv）の場合
+### conda / Miniforge を使う場合
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 4.2 Miniforge / conda の場合
-
-```bash
+```powershell
 conda create -n insighta python=3.11 -y
 conda activate insighta
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install pyinstaller
 ```
 
-補足:
-- LightGBM / SHAP / DBドライバ系の導入に時間がかかることがあります。
-- SQL DBMS を使わない場合でも `requirements.txt` はそのまま入れて問題ありません。
+### venv を使う場合
 
-#### VS Code の PowerShell で `conda` が使えない場合
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install pyinstaller
+```
 
-VS Code のターミナルが PowerShell のとき、`conda activate` が効かない原因の大半は PowerShell プロファイルに `Conda.psm1` の読込設定が入っていないことです。
-このPCでは以下の2ファイルを作成して解消しました。
+### VS Code で conda がうまく切り替わらない場合
 
-- `C:\Users\<ユーザー名>\Documents\PowerShell\Microsoft.PowerShell_profile.ps1`
-- `C:\Users\<ユーザー名>\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`
+PowerShell で `C:/Users/.../Scripts/activate` を直接実行すると、`conda activate` の内部状態が壊れることがあります。  
+VS Code のターミナルでは次だけを使ってください。
 
-プロファイル内では Miniforge / Conda の `Conda.psm1` を `Import-Module` してください。設定後に VS Code のターミナルを開き直すと `conda activate insighta` が有効になります。
+```powershell
+conda activate insighta
+```
+
+確認コマンド:
+
+```powershell
+python -c "import sys; print(sys.executable)"
+```
+
+期待値の例:
+
+```text
+C:\Users\<ユーザー名>\miniforge3\envs\insighta\python.exe
+```
 
 ## 5. 起動方法
 
-```bash
+### ソースコード版
+
+```powershell
 python app.py
 ```
 
-ブラウザで以下を開きます:
+ブラウザで次を開きます。
 
 - `http://127.0.0.1:8050`
 
-## 6. 基本的な使い方
+### 配布版 exe
 
-### 6.1 ファイルから読み込む（CSV / Excel）
+- `release/INSIGHTA/INSIGHTA.exe` を実行
+- 数秒後にブラウザで `http://127.0.0.1:8050` が自動で開く
+- 自動で開かない場合は手動で同 URL を開く
 
-1. `CSV / Excel をアップロード` をクリック
-2. ファイルを選択
-3. データテーブルに内容が表示されることを確認
+終了方法:
+- 画面上部の `アプリを終了` ボタン
+- またはソースコード版では `Ctrl + C`
 
-### 6.2 DB（SQL）から読み込む
+## 6. 基本操作
 
-1. `DB（SQL）から読み込む` を開く
-2. DBMS を選ぶ（SQL Server / MySQL / SQLite / Oracle / PostgreSQL）
-3. 接続情報を入力して `接続`
-4. テーブル一覧から選択
-5. `SELECT文を作成`
-6. 必要なら SQL を編集して `SQLを実行して読み込み`
+### 6.1 データ読み込み
 
+画面上部の各入力手段からデータを読み込みます。
 
-### 6.3 PI（AF SDK）から読み込む
+- `CSV / Excel をアップロード`
+- `DB（SQL）から読み込む`
+- `PI（AF SDK）から読み込む`
 
-1. `PI（AF SDK）から読み込む` を開く
-2. `取得対象` を選択
-   - `PI DAタグ`
-   - `PI AF属性`
-   - `PI AFイベントフレーム`
-3. 共通項目を入力
-   - `PI Data Archiveサーバー名`（PI DAタグ時）
-   - `AFサーバー名` / `AFデータベース名`（AF系時）
-   - 開始時刻 / 終了時刻
-4. 取得対象ごとの必須項目を入力
-   - PI DAタグ: `PIタグ一覧`
-   - PI AF属性: `AFエレメント名` + `AF属性名一覧`
-   - PI AFイベントフレーム: `イベントフレームテンプレート名` + `イベント生成分析名一覧`
-5. `PIデータを読み込み` を押す
+読み込み後のデータテーブルは、すべての読み込み UI の下に表示されます。
 
-時刻指定の例:
-- `*-1d`（現在から1日前）
-- `*`（現在）
-- `2026-01-01 00:00:00`
+### 6.2 データテーブル
 
-補足:
-- PI AF属性は、`timestamp` を行、属性名を列にした横持ちテーブルで取得されます。PI DAタグも複数タグ指定時は同様に横持ちテーブルへ整形されます。
-- PI AFイベントフレームは、テンプレート・期間・分析名で絞り込んだイベント行として取得されます。
-### 6.4 EDA（グラフ選択）
+- 全行スクロール表示
+- フィルタ / ソート
+- 行選択
+- 一括選択チェックボックス
+- 加工後データの CSV / Excel 出力
 
-1. `グラフ設定を表示` を押す
-2. 必要なグラフ種別にチェックを入れる
-3. 別ウィンドウリンク（散布図 / ヒストグラム / 箱ひげ図 / 散布図行列）を開く
-4. グラフ上でドラッグ選択
-5. テーブル、サマリ、ランキング、他グラフへ選択状態が反映されることを確認
+### 6.3 グラフ
 
-選択操作:
+必要なグラフだけ表示できます。
+
+- 散布図
+- ヒストグラム
+- 箱ひげ図
+- 散布図行列
+
+グラフは別ウィンドウで開きます。  
+同期するのはサンプル選択状態だけで、各グラフの軸や列の設定は独立です。
+
+### 6.4 選択操作
+
 - 通常ドラッグ: 置換選択
-- `Ctrl`（Mac は `Command`）+ ドラッグ: 加算選択
-- 全解除: `選択をクリア`
+- `Ctrl` を押しながらドラッグ: 加算選択
+- テーブル選択とグラフ選択は相互反映
+- `選択をクリア` で全解除
 
-## 7. データ前処理と分析対象の制御
+## 7. データ入力の詳細
 
-### 7.1 分析前処理の設定
+### 7.1 CSV / Excel
 
-- 列型の手動変更（`float` / `int` / `string` / `category` / `datetime`）
-- 変換できない値は欠損値になります
-- 欠損行の除外
-- 選択中データを欠損扱いにする（外れ値扱い）
+- CSV: `pandas.read_csv`
+- Excel: `pandas.read_excel`
+- `id` 列が無い場合は自動付与
+- 列型は自動判定され、後から UI で修正可能
 
-### 7.2 統計モデリング共通設定
+### 7.2 SQL
 
-このセクションは「モデルを学習する前の共通設定」です。
+対応 DBMS:
+- SQL Server
+- MySQL
+- SQLite
+- Oracle Database
+- PostgreSQL
 
-順序の意図:
-1. ラグ列追加 / 特徴量追加（新しい変数を作る）
-2. 学習/テスト分割
-3. 標準化
-
-設定できる内容:
-- タイムラグ列追加（例: `temp: 1,-1`）
-- 特徴量追加（例: `temp_diff = temp - pressure`）
-- 学習/テスト分割方法
-- 学習データ比率
-- 乱数シード
-- 層別列 / 順序列
-- 学習データ基準の標準化
-
-## 8. モデリング機能の使い方
-
-### 8.1 実行手順
-
-1. `統計モデリング実行` を開く
-2. モデル手法を選択
-3. 目的変数（教師ありモデルのみ）を選択
-4. 説明変数を選択
-5. `CVで推奨ハイパーパラメータを計算` を押す
-6. JSON を確認・必要なら編集
-7. `モデルを学習して評価` を押す
-
-### 8.2 学習済みモデルの保存 / 再読込
-
-- 保存: `学習済みモデルを保存`
-- 再読込: `学習済みモデルを再読込` から `.joblib` を選択
-
-補足:
-- 再読込時、保存されている結果パネル（評価指標・図）が復元表示されます。
-
-### 8.3 PCA異常予兆検知（T2/Q）の見方
-
-`教師なし: PCA異常予兆検知 (T2/Q)` を選ぶと、UI上に説明文が表示されます。
-このモデルでは目的変数を使わず、学習データから PCA を作成し、次の2種類の逸脱を見ます。
-
-- `T2統計量`
-  - 主成分空間の中で、通常の学習サンプルからどれだけ離れているかを見ます。
-  - T2 の注意/異常管理限界は百分率入力です。100未満はその百分位で計算し、100以上は 90% 閾値を基準に倍率換算します。初期値は 95 / 99 です。
-- `Q統計量`
-  - PCA で再構成しきれなかった残差の大きさを見ます。
-  - Q の注意/異常管理限界も百分率入力で、100未満はその百分位、100以上は 90% 閾値基準の倍率換算です。
-  - 「主成分では説明しにくい異常」を拾うための指標です。
-- `T2寄与度 / Q寄与度`
-  - 寄与度の集計対象は、現在 GUI で選択中のサンプルだけです。
-  - その選択中サンプルの中で異常管理限界を超えたサンプル群を優先し、どの説明変数が逸脱に効いているかを棒グラフと表で表示します。
-  - 超過サンプルが無い場合は、選択中サンプルの中で統計量が最大のサンプルを基準に寄与度を表示します。
-
-使い方の目安:
-1. 説明変数を選ぶ
-2. 必要に応じて `主成分数決定の累積寄与率閾値 (%)`、`T2 注意管理限界 (%)`、`T2 異常管理限界 (%)`、`Q 注意管理限界 (%)`、`Q 異常管理限界 (%)` を調整する
-   - 累積寄与率閾値の初期値は `90%` です。
-   - T2/Q の各管理限界は `95`, `99` が初期値です。
-   - `100未満はその百分位`, `100以上は 90% 閾値を基準に倍率換算` します。
-3. `CVで推奨ハイパーパラメータを計算` または `n_components` を直接指定する
-4. `モデルを学習して評価` を押す
-5. `PCA T2統計量` / `PCA Q統計量` と寄与度を確認する
-
-## 9. 変数重要度（モデル別）
-
-INSIGHTA では、モデルに応じて以下の重要度を表示します。
-
-- 重回帰: 標準化回帰係数（β）
-- PLS回帰: VIP
-- LightGBM回帰: SHAP値 / Gain importance
-- ランダムフォレスト回帰: SHAP値 / Permutation importance
-- ロジスティック回帰分類: 標準化回帰係数（β）
-- LightGBM分類: SHAP値 / Gain importance
-- 決定木分類: SHAP値 / Information Gain / 決定木の図式化
-- ランダムフォレスト分類: SHAP値 / Permutation importance
-- PCA: Loading の 2乗
-- PCA異常予兆検知（T2/Q）: Loading の 2乗 / T2寄与度 / Q寄与度
-- ICA: Mixing matrix
+主な流れ:
+1. DBMS を選択
+2. 接続情報を入力
+3. 接続してテーブル一覧を取得
+4. SQL を作成または編集
+5. 実行して読み込む
 
 注意:
-- SHAP値の計算には `shap` ライブラリが必要です。
-- 一部の重要度は前処理後（One-Hot後）の特徴量単位で表示されます。
+- SQL Server は ODBC Driver 17/18 が必要です。
+- Oracle / PostgreSQL / MySQL も環境に応じたクライアント設定が必要な場合があります。
 
-## 10. データ出力
+### 7.3 PI データ
 
-データテーブル上部から、加工・分析後のデータを出力できます。
+取得対象:
+- PI DA タグ
+- PI AF 属性
+- PI AF イベントフレーム
 
-- `CSV出力`
-- `Excel出力`
+#### PI DA タグ
+- 複数タグはカンマ区切り、改行区切り、全角読点区切りに対応
+- 複数タグ取得時は `timestamp` を行、タグ名を列にした横持ちテーブルへ整形
+- 取得方法は Snapshot / Recorded / Interpolated / Summary に対応
 
-出力対象は「現在データテーブルに表示されているデータ（加工後）」です。
+#### PI AF 属性
+- `AF サーバー名`
+- `AF データベース名`
+- `AF エレメント名` またはパス
+- `AF 属性名一覧`
 
-## 11. SQL/DB と PI 利用時の注意
+複数属性取得時は `timestamp` を行、属性名を列にした横持ちテーブルへ整形します。  
+名前入力は全角区切りや簡易パスも許容するよう正規化しています。
 
-DBMSごとに追加ライブラリ/ドライバが必要です（`requirements.txt` に含めていますが、環境側のDBドライバ設定が必要な場合があります）。
+#### PI AF イベントフレーム
+- `AF サーバー名`
+- `AF データベース名`
+- `イベントフレームテンプレート名`
+- `イベント生成分析名一覧`
+- `開始時刻` / `終了時刻`
 
-- SQL Server
-  - Python側: `pyodbc`
-  - OS側: ODBC Driver 17/18 for SQL Server
-- MySQL
-  - `pymysql`
-- PostgreSQL
-  - `psycopg2-binary`
-- Oracle Database
-  - `oracledb`
-- SQLite
-  - Python標準の `sqlite3` を使用（SQLite DB ファイルパスを指定）
+イベントフレーム取得時は、条件に一致したイベントを行単位で返します。
 
+PI 系の補足:
+- `pythonnet` runtime はアプリ内部で `netfx` を強制しています。
+- PI DA は取得できるが PI AF で失敗するケースに対応するため、DB 名やエレメント名の解決を柔軟化しています。
+- それでも失敗する場合は、AF SDK / PI AF Client のインストール有無、32/64bit 不一致、AF サーバー名と DB 名の指定を確認してください。
 
-PI AF SDK（PI DataLink相当）を使う場合の前提:
-- Windows + PI AF Client（PI System Explorer）導入済み
-- `OSIsoft.AFSDK` が参照可能
-- Python側: `pythonnet`
+## 8. データ前処理
 
-PI/AF接続で失敗する場合の確認ポイント:
-- PI Data Archive サーバー名（または既定サーバー設定）
-- AFサーバー名 / AFデータベース名
-- PIタグ名、AFエレメント名、AF属性名の存在
-- イベントフレームテンプレート名、イベント生成分析名の存在
-- 時間指定（`*-1d` / `*` / 固定時刻文字列）の書式
-- クライアントPCのAF SDKインストール状態
+### 列型変更
+- `float`
+- `int`
+- `string`
+- `category`
+- `datetime`
 
-接続できない場合の確認ポイント:
-- ホスト名 / ポート番号
-- DB名（Oracle はサービス名）
-- スキーマ名（必要なDBMSのみ）
-- ユーザー名 / パスワード
-- ネットワーク疎通（VPN, firewall 等）
-- SQL Server の ODBC Driver インストール有無
+変換できない値は欠損値になります。
 
-## 12. テスト
+### 欠損 / 外れ値扱い
+- 欠損値を含む行を除外
+- 選択中サンプルを欠損扱いにして分析対象から除外
 
-```bash
+### 特徴量追加
+例:
+- `diff = temp - pressure`
+- `ratio = a / b`
+- `log_temp = log(temp)`
+- `exp_x = exp(x)`
+
+### タイムラグ列追加
+例:
+- `temp: 1,-1`
+- `pressure: 3`
+
+## 9. モデリング
+
+### 9.1 共通フロー
+1. 目的変数と説明変数を選ぶ
+2. 必要ならラグ列・特徴量を追加する
+3. 学習 / テスト分割を設定する
+4. 必要なら標準化する
+5. `CVで推奨ハイパーパラメータを計算`
+6. 推奨値を確認し、最終ハイパーパラメータを調整する
+7. `モデルを学習して評価`
+
+### 9.2 分割方法
+- ランダム
+- 層別ランダム
+- 前後
+
+### 9.3 PCA 異常予兆検知（T2 / Q）
+
+このモデルは目的変数を使いません。  
+学習データから PCA を作り、主成分空間内の逸脱と再構成残差の逸脱を監視します。
+
+- `T2 統計量`
+  - 主成分空間内で通常サンプルからどれだけ離れているか
+- `Q 統計量`
+  - PCA で再構成できなかった残差の大きさ
+
+#### 主成分数
+- `主成分数決定の累積寄与率閾値 (%)` を指定可能
+- 初期値は `90`
+- CV 推奨値または手動指定の `n_components` を使って学習
+
+#### 管理限界
+T2 と Q は別々に設定します。
+
+- `T2 注意管理限界 (%)`
+- `T2 異常管理限界 (%)`
+- `Q 注意管理限界 (%)`
+- `Q 異常管理限界 (%)`
+
+考え方:
+- `100未満`: その百分位の閾値を学習データから計算
+- `100以上`: 90% 閾値を基準に倍率換算
+  - 例: `180` は `90% 閾値の 2 倍`
+
+#### 寄与度
+- `T2 寄与度`: PCA 空間での逸脱に効いた変数
+- `Q 寄与度`: 再構成残差に効いた変数
+- 寄与度の集計対象は、現在 UI で選択中のサンプルだけです
+- 選択中サンプルの中で異常管理限界を超えたサンプル群を優先して集計します
+- 超過サンプルが無い場合は、選択中で統計量が最大のサンプルを基準にします
+
+## 10. モデル別の主な出力
+
+### 回帰
+- 実測値と予測値の重ね合わせ
+- yy プロット
+- `R2`
+- `RMSE`
+- `MAE`
+
+### 分類
+- 混同行列
+- ROC 曲線
+- `AUC`
+
+### 重要度
+- 重回帰: 標準化回帰係数
+- PLS 回帰: VIP
+- LightGBM: SHAP、Gain importance
+- ランダムフォレスト: SHAP、Permutation importance
+- 決定木: Information Gain、図式化
+- PCA: Loading の 2 乗
+- PCA T2/Q: T2 寄与度、Q 寄与度
+- ICA: Mixing matrix
+
+## 11. テスト
+
+```powershell
 python -m pytest -q
 ```
 
-## 13. 開発メモ（構成）
+主な対象:
+- ランキング計算
+- 前処理
+- モデリング
+- DB 接続ユーティリティ
+- PI データ取得補助ロジック
 
-主要ファイル:
-- `app.py` : エントリポイント
-- `src/layout.py` : 画面レイアウト
-- `src/callbacks.py` : Dashコールバック
-- `src/data_io.py` : CSV/Excel 読み込み
-- `src/db_connectors.py` : 複数DBMS接続
-- `src/pi_af_sdk.py` : PI DA / PI AF（属性・イベントフレーム）取得
-- `src/preprocess.py` : 列型変更・欠損/外れ値扱い
-- `src/modeling.py` : 分割/標準化/ラグ/特徴量追加
-- `src/model_runner.py` : モデル学習・CV推奨・評価・重要度
-- `src/figures.py` : EDAグラフ生成
-- `src/ranking.py` : 選択群 vs 非選択群の原因候補ランキング
+## 12. PyInstaller ビルド
 
-リファクタリング方針:
-- モデル手法のラベル/説明/既定値は `src/model_runner.py` に集約し、`src/layout.py` 側の重複定義を削減しています。
-- PI 取得は `src/pi_af_sdk.py` に統合し、入力正規化・AF名前解決・netfx fallback を一元化しています。
-
-## 14. トラブルシュート
-
-- Excel読込で `openpyxl` エラーが出る
-  - 実行中の Python 環境に `openpyxl` が入っているか確認してください。
-  - `python -c "import sys,openpyxl; print(sys.executable); print(openpyxl.__version__)"`
-- ポート `8050` が使用中
-  - 既存のアプリを終了するか、ポートを変更して起動してください。
-- SHAP重要度が出ない
-  - `shap` 未インストール、またはモデル/環境依存で計算失敗の可能性があります（メッセージ表示されます）。
-
-## 15. 配布版ビルド手順（開発者向け / PyInstaller）
-
-このアプリは Tkinter へ作り直さず、Dash（Webアプリ）のまま `PyInstaller` で `INSIGHTA.exe` 化しています。
-配布版はローカルPC上で `127.0.0.1:8050` のサーバーを起動し、既定ブラウザを自動で開く方式です。
-
-### 15.1 前提
-
-- Windows 64bit
-- Python 3.11 系
-- 依存関係インストール済み（`requirements.txt`）
-- `INSIGHTA.spec` が存在すること
-
-推奨（今回の実績）:
-- Miniforge / conda 環境 `insighta`
-
-### 15.2 PyInstaller のインストール
-
-```bash
-conda run -n insighta python -m pip install pyinstaller
+```powershell
+python -m PyInstaller --noconfirm --clean INSIGHTA.spec
 ```
 
-### 15.3 ビルド実行
-
-```bash
-conda run -n insighta python -m PyInstaller --noconfirm --clean INSIGHTA.spec
-```
-
-出力先:
+生成物:
 - `dist/INSIGHTA.exe`
 
-### 15.4 配布用フォルダの更新
-
-配布用フォルダは `release/INSIGHTA` を使います（利用者向け）。
-
-- `release/INSIGHTA/INSIGHTA.exe`
-- `release/INSIGHTA/README.md`（配布専用README）
-
-ビルド後に `dist/INSIGHTA.exe` を `release/INSIGHTA/INSIGHTA.exe` にコピーして更新してください。
-
-例:
+配布フォルダ更新:
 
 ```powershell
 Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Force
 ```
 
-### 15.5 起動確認
+詳細な再ビルド手順は `BUILD_WINDOWS.md` を参照してください。
 
-```bash
-.\dist\INSIGHTA.exe
+## 13. GitHub での exe 取り扱い
+
+- `release/INSIGHTA/INSIGHTA.exe` は Git LFS で管理しています
+- `dist/` と `build/` はコミット対象外です
+- 通常の開発ではソースコード中心で管理し、配布用 exe を更新した時だけ `release/INSIGHTA/INSIGHTA.exe` を更新します
+
+確認コマンド:
+
+```powershell
+git lfs ls-files
 ```
 
-- 数秒待つと、既定ブラウザで `http://127.0.0.1:8050` が自動で開きます。
-- 開かない場合はブラウザで `http://127.0.0.1:8050` を手動で開いて確認してください。
+## 14. よくあるトラブル
 
-### 15.6 重要な注意点
+### Excel が読めない
+- 実行中の Python が想定の仮想環境と違う可能性があります
+- `python -c "import sys, openpyxl; print(sys.executable); print(openpyxl.__version__)"` で確認してください
 
-1. `INSIGHTA.exe` を起動したまま再ビルドしない
-- `dist/INSIGHTA.exe` または `release/INSIGHTA/INSIGHTA.exe` が起動中だと、PyInstaller が `PermissionError` で失敗します。
-- 再ビルド前に実行中の `INSIGHTA.exe` を終了してください。
+### `http://127.0.0.1:8050` が開けない
+- 既に別の INSIGHTA が起動中の可能性があります
+- 先に起動済みプロセスを止めてください
 
-2. conda/miniforge 環境では DLL 同梱が重要
-- `INSIGHTA.spec` では conda 環境の `Library/bin` と `DLLs` から DLL を収集する設定にしています。
-- これが無いと `_ctypes` などの DLL ロードエラーで起動失敗することがあります。
+### PI AF 取得に失敗する
+- AF SDK / PI AF Client のインストール確認
+- Python / AF SDK の 64bit 一致確認
+- AF サーバー名、データベース名、エレメント名またはパスの再確認
 
-3. DB接続の実行時要件は別途必要な場合がある
-- 例: SQL Server の ODBC Driver（OS側）
-- `PyInstaller` で Python ライブラリを同梱しても、OS側ドライバは別途必要なことがあります。
+### SQL Server に接続できない
+- ODBC Driver 17/18 for SQL Server を確認してください
 
-### 15.7 補足
+## 15. ライセンス
 
-- `app.py`
-  - frozen実行時の `assets` 解決（`sys._MEIPASS`）
-  - frozen実行時のブラウザ自動起動
-  - frozen実行時は `debug=False`
-- `INSIGHTA.spec`
-  - `assets/` と `data/` の同梱
-  - `lightgbm`, `shap` の収集
-  - DBドライバ/PI連携 hidden import（`pyodbc`, `pymysql`, `psycopg2`, `oracledb`, `pythonnet`, `clr_loader`）
-  - `console=False`（黒いコンソール非表示）
-
-
-
-
-
-## 16. GitHub同期（`release/INSIGHTA/INSIGHTA.exe`）
-
-`release/INSIGHTA/INSIGHTA.exe` は約 156MB です。  
-GitHub の通常 Git には **100MB のハード上限** があるため、通常コミットでは push できません。
-
-このため、本リポジトリでは `INSIGHTA.exe` を Git LFS で管理する前提です（`.gitattributes` 設定済み）。
-
-### 16.1 初回セットアップ（開発PCごと）
-
-```bash
-git lfs install
-```
-
-### 16.2 追跡設定（確認）
-
-```bash
-git lfs track "release/INSIGHTA/INSIGHTA.exe"
-```
-
-補足:
-- 本リポジトリには `.gitattributes` で同設定を追加済みです。
-
-### 16.3 ビルド後に同期する手順
-
-```bash
-git add .gitattributes release/INSIGHTA/INSIGHTA.exe
-git commit -m "Update INSIGHTA.exe"
-git push
-```
-
-### 16.4 注意点
-
-- Git LFS のストレージ容量・転送量には上限があります（利用プラン依存）。
-- 容量/転送制限を避ける場合は、実行ファイルは GitHub Releases に添付する運用が現実的です。
-
-
-
+本リポジトリおよび配布物は MIT License です。  
+詳細は `LICENSE` を参照してください。
