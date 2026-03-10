@@ -107,8 +107,9 @@ INSIGHTA/
 ## 3. 動作環境
 
 ### 開発 / ソースコード実行
-- Python 3.11 以上
-- Windows 64bit を主対象として確認
+- Windows 64bit
+- Miniforge で作成した conda 環境 `insighta`
+- Python 3.11
 - ブラウザ: Edge / Chrome 推奨
 
 ### 配布版
@@ -122,7 +123,8 @@ INSIGHTA/
 
 ## 4. セットアップ
 
-### conda / Miniforge を使う場合
+INSIGHTA の開発・実行・再ビルドは、Miniforge で作成した conda 環境 `insighta` を前提にします。  
+Python 本体は conda で入れ、ライブラリは `requirements.txt` を `pip` で入れる想定です。
 
 ```powershell
 conda create -n insighta python=3.11 -y
@@ -132,17 +134,7 @@ python -m pip install -r requirements.txt
 python -m pip install pyinstaller
 ```
 
-### venv を使う場合
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install pyinstaller
-```
-
-### VS Code で conda がうまく切り替わらない場合
+### VS Code で Miniforge 環境が切り替わらない場合
 
 PowerShell で `C:/Users/.../Scripts/activate` を直接実行すると、`conda activate` の内部状態が壊れることがあります。  
 VS Code のターミナルでは次だけを使ってください。
@@ -405,49 +397,29 @@ python -m pytest -q
 
 ## 12. PyInstaller ビルド
 
-`INSIGHTA.spec` と build 手順で問題になりやすいのは次の 2 点です。
-
-- spec 実行時は通常の Python ファイルと違って `__file__` が使えない
-- `conda run -n <env> powershell ...` では、中の `python` が目的の conda 環境を指さないことがある
-
-そのため、このリポジトリでは `build_windows.py` を正規の build エントリにしています。  
-このスクリプトは実行中の `sys.executable` をそのまま使い、毎回 `dist/` と `build/` を消してから、`INSIGHTA.spec` を絶対パスで呼びます。
-
-### 推奨手順
-
-環境を有効化済みの場合:
+README では、Miniforge の conda 環境 `insighta` を `conda activate insighta` で有効化した状態だけを前提にします。
 
 ```powershell
+conda activate insighta
 python .\build_windows.py
 ```
 
-`conda activate` を使わない場合:
+このスクリプトは次を自動で実行します。
 
-```powershell
-conda run -n insighta python .\build_windows.py
-```
+- 必要なら `pytest` 実行
+- 古い `dist/` と `build/` を削除
+- `INSIGHTA.spec` を絶対パス指定してビルド
+- ビルド失敗時はその場で停止
+- `dist/INSIGHTA.exe` を `release/INSIGHTA/INSIGHTA.exe` にコピー
 
 テストを省略する場合:
 
 ```powershell
-conda run -n insighta python .\build_windows.py --skip-tests
+conda activate insighta
+python .\build_windows.py --skip-tests
 ```
 
-### PowerShell ラッパー
-
-`build_windows.ps1` は、現在の `python` が正しい環境を向いている場合だけ使ってください。
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
-```
-
-### 手動実行する場合
-
-```powershell
-python -m PyInstaller --noconfirm --clean .\INSIGHTA.spec
-Copy-Item -Path .\dist\INSIGHTA.exe -Destination .\release\INSIGHTA\INSIGHTA.exe -Force
-```
-
+`build_windows.ps1` は補助ラッパーですが、README では主手順として扱いません。  
 詳細な再ビルド手順は `BUILD_WINDOWS.md` を参照してください。
 
 ## 13. GitHub での exe 取り扱い
@@ -466,7 +438,7 @@ git lfs ls-files
 
 ### Excel が読めない
 - 実行中の Python が想定の仮想環境と違う可能性があります
-- `python -c "import sys, openpyxl; print(sys.executable); print(openpyxl.__version__)"` で確認してください
+- `conda activate insighta` 後に `python -c "import sys, openpyxl; print(sys.executable); print(openpyxl.__version__)"` で確認してください
 
 ### `http://127.0.0.1:8050` が開けない
 - 既に別の INSIGHTA が起動中の可能性があります
@@ -484,6 +456,4 @@ git lfs ls-files
 
 本リポジトリおよび配布物は MIT License です。  
 詳細は `LICENSE` を参照してください。
-
-
 
