@@ -405,17 +405,47 @@ python -m pytest -q
 
 ## 12. PyInstaller ビルド
 
+`INSIGHTA.spec` と build 手順で問題になりやすいのは次の 2 点です。
+
+- spec 実行時は通常の Python ファイルと違って `__file__` が使えない
+- `conda run -n <env> powershell ...` では、中の `python` が目的の conda 環境を指さないことがある
+
+そのため、このリポジトリでは `build_windows.py` を正規の build エントリにしています。  
+このスクリプトは実行中の `sys.executable` をそのまま使い、毎回 `dist/` と `build/` を消してから、`INSIGHTA.spec` を絶対パスで呼びます。
+
+### 推奨手順
+
+環境を有効化済みの場合:
+
 ```powershell
-python -m PyInstaller --noconfirm --clean INSIGHTA.spec
+python .\build_windows.py
 ```
 
-生成物:
-- `dist/INSIGHTA.exe`
-
-配布フォルダ更新:
+`conda activate` を使わない場合:
 
 ```powershell
-Copy-Item -Path dist\INSIGHTA.exe -Destination release\INSIGHTA\INSIGHTA.exe -Force
+conda run -n insighta python .\build_windows.py
+```
+
+テストを省略する場合:
+
+```powershell
+conda run -n insighta python .\build_windows.py --skip-tests
+```
+
+### PowerShell ラッパー
+
+`build_windows.ps1` は、現在の `python` が正しい環境を向いている場合だけ使ってください。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
+```
+
+### 手動実行する場合
+
+```powershell
+python -m PyInstaller --noconfirm --clean .\INSIGHTA.spec
+Copy-Item -Path .\dist\INSIGHTA.exe -Destination .\release\INSIGHTA\INSIGHTA.exe -Force
 ```
 
 詳細な再ビルド手順は `BUILD_WINDOWS.md` を参照してください。
@@ -454,3 +484,6 @@ git lfs ls-files
 
 本リポジトリおよび配布物は MIT License です。  
 詳細は `LICENSE` を参照してください。
+
+
+

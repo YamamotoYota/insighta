@@ -4,35 +4,103 @@
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 
-def _dll_binaries_from(folder: str) -> list[tuple[str, str]]:
-    """Collect dll files from folder for conda environment compatibility."""
-    path = Path(folder)
+PROJECT_ROOT = Path(SPECPATH).resolve()
+
+
+def _existing_data_dir(name: str) -> list[tuple[str, str]]:
+    """Return PyInstaller data tuple only when the directory exists."""
+    path = PROJECT_ROOT / name
     if not path.exists():
         return []
-    return [(str(p), '.') for p in path.glob('*.dll') if p.is_file()]
+    return [(str(path), name)]
+
+
+def _dll_binaries_from(folder: Path) -> list[tuple[str, str]]:
+    """Collect DLL files from the active Python environment."""
+    if not folder.exists():
+        return []
+    return [(str(path), ".") for path in folder.glob("*.dll") if path.is_file()]
+
+
+def _safe_collect_all(package_name: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]], list[str]]:
+    """Collect package files without failing when the package is unavailable."""
+    try:
+        return collect_all(package_name)
+    except Exception:
+        return [], [], []
+
+
+def _safe_collect_data_files(package_name: str) -> list[tuple[str, str]]:
+    """Collect package data files without hard build failure."""
+    try:
+        return collect_data_files(package_name)
+    except Exception:
+        return []
+
+
+def _safe_collect_dynamic_libs(package_name: str) -> list[tuple[str, str]]:
+    """Collect package dynamic libraries without hard build failure."""
+    try:
+        return collect_dynamic_libs(package_name)
+    except Exception:
+        return []
+
+
+def _safe_collect_submodules(package_name: str) -> list[str]:
+    """Collect package submodules without hard build failure."""
+    try:
+        return collect_submodules(package_name)
+    except Exception:
+        return []
+
 
 env_root = Path(sys.executable).resolve().parent
 
-datas = [('assets', 'assets'), ('data', 'data')]
-binaries = []
-binaries += _dll_binaries_from(str(env_root / 'Library' / 'bin'))
-binaries += _dll_binaries_from(str(env_root / 'DLLs'))
-hiddenimports = ['pyodbc', 'pymysql', 'psycopg2', 'oracledb', 'clr']
-tmp_ret = collect_all('lightgbm')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('shap')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+datas: list[tuple[str, str]] = []
+datas += _existing_data_dir("assets")
+datas += _existing_data_dir("data")
+
+binaries: list[tuple[str, str]] = []
+binaries += _dll_binaries_from(env_root / "Library" / "bin")
+binaries += _dll_binaries_from(env_root / "DLLs")
+
+hiddenimports: list[str] = [
+    "pyodbc",
+    "pymysql",
+    "psycopg2",
+    "oracledb",
+    "clr",
+]
+
+# Optional/runtime-loaded modules used by INSIGHTA features.
+hiddenimports += _safe_collect_submodules("openpyxl")
+hiddenimports += _safe_collect_submodules("xlrd")
+hiddenimports += _safe_collect_submodules("sqlalchemy.dialects")
+hiddenimports += _safe_collect_submodules("pythonnet")
+datas += _safe_collect_data_files("openpyxl")
+binaries += _safe_collect_dynamic_libs("pythonnet")
+
+for package_name in ("lightgbm", "shap"):
+    collected_datas, collected_binaries, collected_hiddenimports = _safe_collect_all(package_name)
+    datas += collected_datas
+    binaries += collected_binaries
+    hiddenimports += collected_hiddenimports
 
 
 a = Analysis(
-    ['app.py'],
-    pathex=[],
+    [str(PROJECT_ROOT / "app.py")],
+    pathex=[str(PROJECT_ROOT)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports,
+    hiddenimports=sorted(set(hiddenimports)),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -48,7 +116,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='INSIGHTA',
+    name="INSIGHTA",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -62,5 +130,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
-
 
