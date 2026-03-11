@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from .data_io import ID_COLUMN
 from .utils import empty_figure, normalize_id_list
 
 BASE_COLOR = "#9E9E9E"
@@ -29,7 +30,7 @@ def create_scatter_figure(
     x_col: str | None,
     y_col: str | None,
     selected_ids: list[str] | None,
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
 ) -> go.Figure:
     """Build scatter plot with linked-selection highlight."""
     if not x_col or not y_col or x_col not in df.columns or y_col not in df.columns:
@@ -72,7 +73,7 @@ def create_distribution_figure(
     value_col: str | None,
     selected_ids: list[str] | None,
     view_mode: str = "hist",
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
 ) -> go.Figure:
     """Create a box/hist figure with id-bearing customdata for selection sync."""
     if not value_col or value_col not in df.columns:
@@ -182,7 +183,7 @@ def create_scatter_matrix_figure(
     df: pd.DataFrame,
     dimensions: list[str] | None,
     selected_ids: list[str] | None,
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
 ) -> go.Figure:
     """Build matrix view: lower=scatter, diagonal=hist, upper=correlation."""
     dims = _existing_columns(dimensions, df.columns)

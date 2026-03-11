@@ -28,7 +28,7 @@ from src.state import build_default_ui_config, build_default_view_config, build_
 def _build_initial_state(app_run_id: str) -> tuple[dict, dict, dict, str]:
     """Build initial app stores and status message."""
     current_data = build_empty_data_state(app_run_id=app_run_id)
-    ui_config = build_default_ui_config(current_data["metadata"])
+    ui_config = build_default_ui_config()
     view_config = build_default_view_config(current_data["metadata"])
     status_message = "CSV/Excelアップロード、SQL、またはPI（AF SDK）からデータを読み込んでください。"
     return current_data, ui_config, view_config, status_message

@@ -18,7 +18,7 @@ import pandas as pd
 from dash import Dash, Input, Output, State, callback_context, dash_table, dcc, html, no_update
 from flask import request
 
-from .data_io import DataLoadError, load_dataset_from_upload, prepare_dataframe
+from .data_io import DataLoadError, ID_COLUMN, load_dataset_from_upload, prepare_dataframe
 from .figures import create_distribution_figure, create_scatter_figure, create_scatter_matrix_figure
 from .modeling import (
     apply_modeling_preparation,
@@ -68,9 +68,9 @@ from .state import (
     build_default_view_config,
     dataframe_from_json,
 )
+from .ui_config import DEFAULT_GRAPH_CARD_HEIGHT, graph_card_style, visible_graph_keys
 from .utils import empty_figure, format_dataset_meta, normalize_id_list, pick_column
 
-VISIBLE_GRAPH_KEYS = ["scatter", "hist", "box", "matrix"]
 MODEL_ARTIFACT_CACHE: dict[str, dict[str, Any]] = {}
 
 
@@ -95,8 +95,9 @@ def _schedule_server_shutdown(shutdown_callable: Any) -> None:
 def _normalize_visible_graphs(values: list[str] | None) -> list[str]:
     """Normalize visible graph key list."""
     if values is None:
-        return VISIBLE_GRAPH_KEYS.copy()
-    return [key for key in values if key in VISIBLE_GRAPH_KEYS]
+        return visible_graph_keys()
+    available = set(visible_graph_keys())
+    return [key for key in values if key in available]
 
 
 def _model_store_payload(cache_key: str | None) -> dict[str, Any]:
@@ -293,7 +294,7 @@ def _query_window_graph(search: str | None) -> str | None:
     graph = str(parsed.get("graph", [""])[0]).strip().lower()
     if graph == "dist":
         graph = "hist"
-    return graph if graph in VISIBLE_GRAPH_KEYS else None
+    return graph if graph in set(visible_graph_keys()) else None
 
 
 def _graph_section_style(show_graphs: bool) -> dict[str, str]:
@@ -301,24 +302,6 @@ def _graph_section_style(show_graphs: bool) -> dict[str, str]:
     if show_graphs:
         return {"display": "block", "marginTop": "12px"}
     return {"display": "none", "marginTop": "12px"}
-
-
-def _graph_card_style(visible: bool, height: str = "420px") -> dict[str, str]:
-    """Return graph card style with visibility state."""
-    if not visible:
-        return {"display": "none"}
-    return {
-        "display": "block",
-        "height": height,
-        "minHeight": "260px",
-        "minWidth": "320px",
-        "resize": "both",
-        "overflow": "hidden",
-        "border": "1px solid #d9d9d9",
-        "borderRadius": "8px",
-        "padding": "8px",
-        "backgroundColor": "#fff",
-    }
 
 
 def _window_link_style(enabled: bool) -> dict[str, str]:
@@ -347,7 +330,7 @@ def _ranking_columns() -> list[dict[str, str]]:
     return [{"name": labels[col], "id": col} for col in RANKING_COLUMNS]
 
 
-def _plot_columns(columns: list[str], *, id_col: str = "id") -> list[str]:
+def _plot_columns(columns: list[str], *, id_col: str = ID_COLUMN) -> list[str]:
     """Build graph-selectable column order (non-id first, id last)."""
     non_id = [col for col in columns if col != id_col]
     if id_col in columns:
@@ -489,7 +472,7 @@ def _prepare_modeling_runtime_dataframe(
         exclude_missing_rows=bool(cfg.get("exclude_missing_rows", False)),
         selected_ids=normalize_id_list(selected_ids),
         treat_selected_as_missing=bool(cfg.get("treat_selected_as_missing", False)),
-        id_col="id",
+        id_col=ID_COLUMN,
     )
     return filtered_df
 
@@ -613,8 +596,8 @@ def _prepare_typed_dataframe(
 ) -> pd.DataFrame:
     """Deserialize dataframe and apply dtype overrides."""
     base_df = prepare_dataframe(dataframe_from_json(current_data["df_json"]))
-    overrides = normalize_type_overrides((ui_config or {}).get("type_overrides"), base_df.columns, id_col="id")
-    return apply_type_overrides(base_df, overrides, id_col="id")
+    overrides = normalize_type_overrides((ui_config or {}).get("type_overrides"), base_df.columns, id_col=ID_COLUMN)
+    return apply_type_overrides(base_df, overrides, id_col=ID_COLUMN)
 
 
 def _apply_modeling_config(
@@ -661,7 +644,7 @@ def _build_summary_panel(
     if not selected_ids:
         return html.Div("未選択 (No selection)")
 
-    selected_mask = df["id"].astype(str).isin(set(selected_ids))
+    selected_mask = df[ID_COLUMN].astype(str).isin(set(selected_ids))
     n_selected = int(selected_mask.sum())
     n_others = int((~selected_mask).sum())
 
@@ -1060,10 +1043,10 @@ def register_callbacks(app: Dash) -> None:
             return []
 
         df = prepare_dataframe(dataframe_from_json(current_data["df_json"]))
-        existing_overrides = normalize_type_overrides((ui_config or {}).get("type_overrides"), df.columns, id_col="id")
+        existing_overrides = normalize_type_overrides((ui_config or {}).get("type_overrides"), df.columns, id_col=ID_COLUMN)
         rows: list[dict[str, str]] = []
         for col in df.columns:
-            if col == "id":
+            if col == ID_COLUMN:
                 continue
             rows.append(
                 {
@@ -1111,13 +1094,13 @@ def register_callbacks(app: Dash) -> None:
     ) -> dict[str, Any]:
         metadata = (current_data or {}).get("metadata", {})
         all_cols: list[str] = _plot_columns(list(metadata.get("columns", [])))
-        non_id_cols: list[str] = [col for col in all_cols if col != "id"]
+        non_id_cols: list[str] = [col for col in all_cols if col != ID_COLUMN]
         exclude_missing_rows, treat_selected_as_missing = _analysis_option_flags(analysis_options)
         standardize_enabled = _standardize_enabled(standardize_check)
 
         trigger = callback_context.triggered_id
         if trigger == "current-data-store" or not existing:
-            config = build_default_ui_config(metadata)
+            config = build_default_ui_config()
             if existing:
                 config["show_graphs"] = bool(existing.get("show_graphs", False))
                 config["visible_graphs"] = _normalize_visible_graphs(existing.get("visible_graphs"))
@@ -1133,7 +1116,7 @@ def register_callbacks(app: Dash) -> None:
                 config["show_graphs"] = True
             return config
 
-        current_overrides = normalize_type_overrides((existing or {}).get("type_overrides"), non_id_cols, id_col="id")
+        current_overrides = normalize_type_overrides((existing or {}).get("type_overrides"), non_id_cols, id_col=ID_COLUMN)
         if dtype_table_rows is not None:
             current_overrides = _extract_type_overrides(dtype_table_rows, non_id_cols)
 
@@ -1196,7 +1179,7 @@ def register_callbacks(app: Dash) -> None:
 
         typed_df = _prepare_typed_dataframe(current_data, ui_config or {})
         modeled_df, _ = _apply_modeling_config(typed_df, ui_config or {})
-        runtime_metadata = build_runtime_metadata(modeled_df, id_col="id")
+        runtime_metadata = build_runtime_metadata(modeled_df, id_col=ID_COLUMN)
         all_cols = _plot_columns(list(runtime_metadata.get("columns", [])))
         numeric_cols = list(runtime_metadata.get("numeric_cols", []))
 
@@ -1317,13 +1300,13 @@ def register_callbacks(app: Dash) -> None:
 
         effective_cfg = dict(cfg)
         metadata_columns = list((current_data or {}).get("metadata", {}).get("columns", []))
-        non_id_cols = [col for col in metadata_columns if col != "id"]
+        non_id_cols = [col for col in metadata_columns if col != ID_COLUMN]
         if dtype_table_rows is not None:
             effective_cfg["type_overrides"] = _extract_type_overrides(dtype_table_rows, non_id_cols)
 
         typed_df = _prepare_typed_dataframe(current_data, effective_cfg)
         modeled_df, _ = _apply_modeling_config(typed_df, effective_cfg)
-        runtime_metadata = build_runtime_metadata(modeled_df, id_col="id")
+        runtime_metadata = build_runtime_metadata(modeled_df, id_col=ID_COLUMN)
         all_cols: list[str] = _plot_columns(list(runtime_metadata.get("columns", [])))
         numeric_cols: list[str] = list(runtime_metadata.get("numeric_cols", []))
 
@@ -1413,7 +1396,7 @@ def register_callbacks(app: Dash) -> None:
         except Exception:
             return [], [], None, [], (not requires_target), help_text
 
-        candidate_cols = [col for col in _plot_columns(list(runtime_df.columns)) if col != "id"]
+        candidate_cols = [col for col in _plot_columns(list(runtime_df.columns)) if col != ID_COLUMN]
         target_options = [{"label": col, "value": col} for col in candidate_cols]
 
         if requires_target:
@@ -2059,12 +2042,12 @@ def register_callbacks(app: Dash) -> None:
             exclude_missing_rows=exclude_missing_rows,
             selected_ids=selected_ids,
             treat_selected_as_missing=treat_selected_as_missing,
-            id_col="id",
+            id_col=ID_COLUMN,
         )
-        runtime_metadata = build_runtime_metadata(filtered_df, id_col="id")
+        runtime_metadata = build_runtime_metadata(filtered_df, id_col=ID_COLUMN)
         numeric_cols: list[str] = list(runtime_metadata.get("numeric_cols", []))
 
-        existing_id_set = set(filtered_df["id"].astype(str))
+        existing_id_set = set(filtered_df[ID_COLUMN].astype(str))
         selected_ids = [row_id for row_id in selected_ids if row_id in existing_id_set]
 
         x_col = pick_column(per_view.get("x_col"), all_cols, 0)
@@ -2092,10 +2075,10 @@ def register_callbacks(app: Dash) -> None:
         table_data = _to_records(filtered_df)
         table_columns = [{"name": col, "id": col} for col in filtered_df.columns]
         selected_id_set = set(selected_ids)
-        selected_rows = [idx for idx, row_id in enumerate(filtered_df["id"].astype(str)) if row_id in selected_id_set]
+        selected_rows = [idx for idx, row_id in enumerate(filtered_df[ID_COLUMN].astype(str)) if row_id in selected_id_set]
 
-        raw_meta = build_runtime_metadata(raw_df, id_col="id")
-        filtered_meta = build_runtime_metadata(filtered_df, id_col="id")
+        raw_meta = build_runtime_metadata(raw_df, id_col=ID_COLUMN)
+        filtered_meta = build_runtime_metadata(filtered_df, id_col=ID_COLUMN)
         dataset_meta = (
             f"{format_dataset_meta(source_name, raw_meta)} | "
             f"分析対象行={filtered_meta['row_count']}"
@@ -2163,10 +2146,10 @@ def register_callbacks(app: Dash) -> None:
             hist_link_style,
             box_link_style,
             matrix_link_style,
-            _graph_card_style(scatter_visible, "420px"),
-            _graph_card_style(hist_visible, "420px"),
-            _graph_card_style(box_visible, "420px"),
-            _graph_card_style(matrix_visible, "420px"),
+            graph_card_style(visible=scatter_visible, height=DEFAULT_GRAPH_CARD_HEIGHT),
+            graph_card_style(visible=hist_visible, height=DEFAULT_GRAPH_CARD_HEIGHT),
+            graph_card_style(visible=box_visible, height=DEFAULT_GRAPH_CARD_HEIGHT),
+            graph_card_style(visible=matrix_visible, height=DEFAULT_GRAPH_CARD_HEIGHT),
             graph_window_message,
         )
 

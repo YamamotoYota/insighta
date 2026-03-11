@@ -5,7 +5,12 @@
 
 from __future__ import annotations
 
-from src.db_connectors import DatabaseConfig, build_select_sample_query, normalize_dbms
+from src.db_connectors import (
+    DatabaseConfig,
+    build_select_sample_query,
+    build_sql_connection_options,
+    normalize_dbms,
+)
 
 
 def test_normalize_dbms_fallback() -> None:
@@ -20,3 +25,8 @@ def test_build_select_sample_query_by_dbms() -> None:
     assert "LIMIT 10" in build_select_sample_query(DatabaseConfig(dbms="sqlite"), "t1", 10)
     assert "FETCH FIRST 10 ROWS ONLY" in build_select_sample_query(DatabaseConfig(dbms="oracle"), "SCHEMA1.T1", 10)
     assert "LIMIT 10" in build_select_sample_query(DatabaseConfig(dbms="postgresql"), "public.t1", 10)
+
+
+def test_build_sql_connection_options_order_is_stable() -> None:
+    options = build_sql_connection_options()
+    assert [item["value"] for item in options] == ["sqlserver", "mysql", "sqlite", "oracle", "postgresql"]

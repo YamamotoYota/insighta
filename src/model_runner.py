@@ -15,6 +15,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from .data_io import ID_COLUMN
 from .modeling import (
     normalize_random_seed,
     normalize_split_method,
@@ -734,14 +735,18 @@ def _prepare_unsupervised_dataset(
     selected_ids: list[str] | None,
 ) -> dict[str, Any]:
     """Prepare unsupervised model inputs and train/test split."""
-    available = [col for col in df.columns if col != "id"]
+    available = [col for col in df.columns if col != ID_COLUMN]
     chosen = [col for col in (feature_cols or []) if col in available]
     if not chosen:
         chosen = available[: min(len(available), 8)]
     if not chosen:
         raise ValueError("特徴量列を1つ以上選択してください。")
 
-    row_ids = df["id"].astype(str) if "id" in df.columns else pd.Series(df.index.astype(str), index=df.index)
+    row_ids = (
+        df[ID_COLUMN].astype(str)
+        if ID_COLUMN in df.columns
+        else pd.Series(df.index.astype(str), index=df.index)
+    )
     working = df[chosen].copy()
     working["__sample_id__"] = row_ids.loc[working.index]
     # 全特徴が欠損の行は学習に使えないため除外する。
@@ -809,7 +814,7 @@ def _prepare_supervised_dataset(
     if not target_col or target_col not in df.columns:
         raise ValueError("目的変数を選択してください。")
 
-    available = [col for col in df.columns if col not in {"id", target_col}]
+    available = [col for col in df.columns if col not in {ID_COLUMN, target_col}]
     chosen = [col for col in (feature_cols or []) if col in available]
     if not chosen:
         chosen = available

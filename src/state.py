@@ -10,7 +10,8 @@ from typing import Any
 
 import pandas as pd
 
-from .data_io import infer_column_types
+from .data_io import ID_COLUMN, infer_column_types
+from .ui_config import visible_graph_keys
 
 
 def dataframe_to_json(df: pd.DataFrame) -> str:
@@ -67,10 +68,10 @@ def build_current_data_state(
     }
 
 
-def build_default_ui_config(metadata: dict[str, Any]) -> dict[str, Any]:
+def build_default_ui_config() -> dict[str, Any]:
     """Create default shared UI config (window-independent settings)."""
     return {
-        "visible_graphs": ["scatter", "hist", "box", "matrix"],
+        "visible_graphs": visible_graph_keys(),
         "show_graphs": False,
         "type_overrides": {},
         "exclude_missing_rows": False,
@@ -91,7 +92,7 @@ def build_default_view_config(metadata: dict[str, Any]) -> dict[str, Any]:
     numeric_cols: list[str] = list(metadata.get("numeric_cols", []))
     all_cols: list[str] = list(metadata.get("columns", []))
 
-    non_id_cols = [col for col in all_cols if col != "id"]
+    non_id_cols = [col for col in all_cols if col != ID_COLUMN]
     plot_cols = non_id_cols or all_cols
 
     x_col = plot_cols[0] if len(plot_cols) >= 1 else None

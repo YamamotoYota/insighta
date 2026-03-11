@@ -10,7 +10,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from .data_io import infer_column_types
+from .data_io import ID_COLUMN, infer_column_types
 from .utils import normalize_id_list
 
 SUPPORTED_CAST_TYPES: tuple[str, ...] = ("auto", "float", "int", "string", "category", "datetime")
@@ -59,7 +59,7 @@ def normalize_type_overrides(
     overrides: dict[str, Any] | None,
     columns: Iterable[str],
     *,
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
 ) -> dict[str, str]:
     """Normalize raw override map into supported `{column: cast_type}` map."""
     normalized: dict[str, str] = {}
@@ -107,7 +107,7 @@ def apply_type_overrides(
     df: pd.DataFrame,
     overrides: dict[str, Any] | None,
     *,
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
 ) -> pd.DataFrame:
     """Apply user-defined dtype overrides and coerce invalid values to missing."""
     working = df.copy()
@@ -136,7 +136,7 @@ def apply_analysis_filters(
     exclude_missing_rows: bool,
     selected_ids: Iterable[object] | None,
     treat_selected_as_missing: bool,
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
 ) -> pd.DataFrame:
     """Apply analysis filters (selected-as-missing / drop missing rows)."""
     working = df.copy()
@@ -155,7 +155,7 @@ def apply_analysis_filters(
     return working
 
 
-def build_runtime_metadata(df: pd.DataFrame, *, id_col: str = "id") -> dict[str, Any]:
+def build_runtime_metadata(df: pd.DataFrame, *, id_col: str = ID_COLUMN) -> dict[str, Any]:
     """Build runtime metadata from dataframe."""
     numeric_cols, categorical_cols = infer_column_types(df, id_col=id_col)
     return {

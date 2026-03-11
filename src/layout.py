@@ -9,22 +9,9 @@ from typing import Any
 
 from dash import dash_table, dcc, html
 
+from .db_connectors import build_sql_connection_options
 from .model_runner import default_model_key, model_description, model_options
-
-
-def _graph_card_style(height: str) -> dict[str, str]:
-    """Return resizable style for graph containers."""
-    return {
-        "height": height,
-        "minHeight": "260px",
-        "minWidth": "320px",
-        "resize": "both",
-        "overflow": "hidden",
-        "border": "1px solid #d9d9d9",
-        "borderRadius": "8px",
-        "padding": "8px",
-        "backgroundColor": "#fff",
-    }
+from .ui_config import graph_card_style, graph_options, graph_window_links, visible_graph_keys
 
 
 def create_layout(
@@ -95,37 +82,17 @@ def create_layout(
             html.Div(
                 [
                     html.Span("グラフを別ウィンドウで開く: "),
-                    html.A(
-                        "散布図",
-                        id="open-scatter-window-link",
-                        href="/?show_graphs=1&graph=scatter",
-                        target="_blank",
-                        rel="noopener noreferrer",
-                        style={"marginRight": "10px"},
-                    ),
-                    html.A(
-                        "ヒストグラム",
-                        id="open-hist-window-link",
-                        href="/?show_graphs=1&graph=hist",
-                        target="_blank",
-                        rel="noopener noreferrer",
-                        style={"marginRight": "10px"},
-                    ),
-                    html.A(
-                        "箱ひげ図",
-                        id="open-box-window-link",
-                        href="/?show_graphs=1&graph=box",
-                        target="_blank",
-                        rel="noopener noreferrer",
-                        style={"marginRight": "10px"},
-                    ),
-                    html.A(
-                        "散布図行列",
-                        id="open-matrix-window-link",
-                        href="/?show_graphs=1&graph=matrix",
-                        target="_blank",
-                        rel="noopener noreferrer",
-                    ),
+                    *[
+                        html.A(
+                            item["label"],
+                            id=item["id"],
+                            href=item["href"],
+                            target="_blank",
+                            rel="noopener noreferrer",
+                            style={"marginRight": "10px"} if item["key"] != "matrix" else {},
+                        )
+                        for item in graph_window_links()
+                    ],
                 ],
                 style={"marginBottom": "12px"},
             ),
@@ -142,13 +109,7 @@ def create_layout(
                         [
                             dcc.Dropdown(
                                 id="sql-dbms-dropdown",
-                                options=[
-                                    {"label": "SQL Server", "value": "sqlserver"},
-                                    {"label": "MySQL", "value": "mysql"},
-                                    {"label": "SQLite", "value": "sqlite"},
-                                    {"label": "Oracle Database", "value": "oracle"},
-                                    {"label": "PostgreSQL", "value": "postgresql"},
-                                ],
+                                options=build_sql_connection_options(),
                                 value="sqlserver",
                                 clearable=False,
                                 style={"width": "180px"},
@@ -924,13 +885,8 @@ def create_layout(
                 children=[
                     dcc.Checklist(
                         id="visible-graphs-checklist",
-                        options=[
-                            {"label": "散布図", "value": "scatter"},
-                            {"label": "ヒストグラム", "value": "hist"},
-                            {"label": "箱ひげ図", "value": "box"},
-                            {"label": "散布図行列", "value": "matrix"},
-                        ],
-                        value=["scatter", "hist", "box", "matrix"],
+                        options=graph_options(),
+                        value=visible_graph_keys(),
                         inline=True,
                         style={"marginBottom": "10px"},
                     ),
@@ -966,7 +922,7 @@ def create_layout(
                                     ),
                                 ],
                                 id="scatter-card",
-                                style=_graph_card_style("460px"),
+                                style=graph_card_style(height="460px"),
                             ),
                             html.Div(
                                 [
@@ -985,7 +941,7 @@ def create_layout(
                                     ),
                                 ],
                                 id="hist-card",
-                                style=_graph_card_style("460px"),
+                                style=graph_card_style(height="460px"),
                             ),
                             html.Div(
                                 [
@@ -1004,7 +960,7 @@ def create_layout(
                                     ),
                                 ],
                                 id="box-card",
-                                style=_graph_card_style("460px"),
+                                style=graph_card_style(height="460px"),
                             ),
                             html.Div(
                                 [
@@ -1023,7 +979,7 @@ def create_layout(
                                     ),
                                 ],
                                 id="matrix-card",
-                                style=_graph_card_style("460px"),
+                                style=graph_card_style(height="460px"),
                             ),
                         ],
                         id="graphs-grid",

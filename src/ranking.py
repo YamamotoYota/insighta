@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency, ttest_ind
 
+from .data_io import ID_COLUMN
 from .utils import normalize_id_list
 
 RANKING_COLUMNS = [
@@ -47,7 +48,7 @@ def rank_candidate_causes(
     df: pd.DataFrame,
     selected_ids: Iterable[object] | None,
     *,
-    id_col: str = "id",
+    id_col: str = ID_COLUMN,
     top_n: int = 10,
 ) -> tuple[pd.DataFrame, str | None]:
     """Rank candidate explanatory variables with statistical tests."""
