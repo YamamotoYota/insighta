@@ -72,3 +72,5 @@ outputs/
 secrets/
 config.local.*
 
+
+data/large_upload_test_*.xlsx

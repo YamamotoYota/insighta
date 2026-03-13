@@ -9,7 +9,6 @@ import base64
 import hashlib
 import io
 import json
-import math
 import os
 import threading
 import time
@@ -72,6 +71,7 @@ from .state import (
     dataframe_from_state,
     has_current_dataset,
 )
+from .table_backend import apply_table_view, slice_table_page
 from .ui_config import DEFAULT_GRAPH_CARD_HEIGHT, graph_card_style, visible_graph_keys
 from .utils import empty_figure, format_dataset_meta, normalize_id_list, pick_column
 
@@ -213,135 +213,6 @@ def _pick_multi_columns(
     if selected:
         return selected
     return candidates[:fallback_count]
-
-
-def _normalize_table_page_size(value: Any) -> int:
-    """Normalize DataTable page size for backend paging."""
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = 200
-    return max(1, min(parsed, 1000))
-
-
-def _normalize_table_page_current(value: Any) -> int:
-    """Normalize DataTable page index."""
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = 0
-    return max(parsed, 0)
-
-
-_TABLE_FILTER_OPERATORS = [
-    ["ge ", ">="],
-    ["le ", "<="],
-    ["lt ", "<"],
-    ["gt ", ">"],
-    ["ne ", "!="],
-    ["eq ", "="],
-    ["contains "],
-    ["datestartswith "],
-]
-
-
-def _split_filter_part(filter_part: str) -> tuple[str | None, str | None, Any]:
-    """Split Dash DataTable filter query part."""
-    for operator_type in _TABLE_FILTER_OPERATORS:
-        for operator in operator_type:
-            if operator not in filter_part:
-                continue
-            name_part, value_part = filter_part.split(operator, 1)
-            name = name_part[name_part.find("{") + 1 : name_part.rfind("}")]
-            value = value_part.strip()
-            if value and value[0] == value[-1] and value[0] in ("'", '"', '`'):
-                value = value[1:-1].replace(f"\\{value[0]}", value[0])
-            else:
-                try:
-                    value = float(value)
-                except ValueError:
-                    pass
-            return name, operator_type[0].strip(), value
-    return None, None, None
-
-
-def _apply_filter_part(df: pd.DataFrame, filter_part: str) -> pd.DataFrame:
-    """Apply one Dash DataTable filter part to dataframe."""
-    column, operator_key, raw_value = _split_filter_part(filter_part)
-    if not column or column not in df.columns or not operator_key:
-        return df
-
-    series = df[column]
-    if operator_key == "contains":
-        return df.loc[series.astype(str).str.contains(str(raw_value), case=False, na=False)]
-    if operator_key == "datestartswith":
-        return df.loc[series.astype(str).str.startswith(str(raw_value), na=False)]
-
-    if pd.api.types.is_datetime64_any_dtype(series):
-        compare_series = pd.to_datetime(series, errors="coerce")
-        compare_value = pd.to_datetime(raw_value, errors="coerce")
-    elif pd.api.types.is_numeric_dtype(series):
-        compare_series = pd.to_numeric(series, errors="coerce")
-        try:
-            compare_value = float(raw_value)
-        except (TypeError, ValueError):
-            return df.iloc[0:0]
-    else:
-        compare_series = series.astype(str)
-        compare_value = str(raw_value)
-
-    if pd.isna(compare_value):
-        return df.iloc[0:0]
-
-    operation_map = {
-        "eq": compare_series == compare_value,
-        "ne": compare_series != compare_value,
-        "lt": compare_series < compare_value,
-        "le": compare_series <= compare_value,
-        "gt": compare_series > compare_value,
-        "ge": compare_series >= compare_value,
-    }
-    mask = operation_map.get(operator_key)
-    if mask is None:
-        return df
-    return df.loc[mask.fillna(False) if hasattr(mask, 'fillna') else mask]
-
-
-def _apply_table_filter_query(df: pd.DataFrame, filter_query: str | None) -> pd.DataFrame:
-    """Apply Dash DataTable filter_query server-side."""
-    query = str(filter_query or "").strip()
-    if not query:
-        return df
-
-    result = df
-    for filter_part in [part.strip() for part in query.split(" && ") if part.strip()]:
-        result = _apply_filter_part(result, filter_part)
-    return result
-
-
-def _apply_table_sort(df: pd.DataFrame, sort_by: list[dict[str, Any]] | None) -> pd.DataFrame:
-    """Apply Dash DataTable multi-sort server-side."""
-    sort_cols = [item.get("column_id") for item in (sort_by or []) if item.get("column_id") in df.columns]
-    if not sort_cols:
-        return df
-    ascending = [str(item.get("direction", "asc")) != "desc" for item in (sort_by or []) if item.get("column_id") in df.columns]
-    return df.sort_values(sort_cols, ascending=ascending, kind="mergesort", na_position="last")
-
-
-def _apply_table_view(df: pd.DataFrame, filter_query: str | None, sort_by: list[dict[str, Any]] | None) -> pd.DataFrame:
-    """Build server-side filtered/sorted DataTable view."""
-    filtered = _apply_table_filter_query(df, filter_query)
-    return _apply_table_sort(filtered, sort_by)
-
-
-def _slice_table_page(df: pd.DataFrame, page_current: Any, page_size: Any) -> tuple[pd.DataFrame, int]:
-    """Slice DataTable page and return page count."""
-    size = _normalize_table_page_size(page_size)
-    current = _normalize_table_page_current(page_current)
-    page_count = math.ceil(len(df) / size) if len(df) else 0
-    start = current * size
-    end = start + size
-    return df.iloc[start:end].copy(), page_count
 
 
 def _analysis_view_cache_key(
@@ -2074,7 +1945,7 @@ def register_callbacks(app: Dash) -> None:
             return no_update, "出力対象のデータテーブルが空です。"
 
         filtered_df, _modeling_meta, _runtime_metadata = _build_filtered_analysis_dataframe(current_data, ui_config, selected_ids)
-        df = _apply_table_view(filtered_df, table_filter_query, table_sort_by)
+        df = apply_table_view(filtered_df, table_filter_query, table_sort_by)
         if df.empty:
             return no_update, "出力対象のデータテーブルが空です。"
 
@@ -2168,7 +2039,7 @@ def register_callbacks(app: Dash) -> None:
                 if not current_data or not has_current_dataset(current_data):
                     return no_update
                 filtered_df, _modeling_meta, _runtime_metadata = _build_filtered_analysis_dataframe(current_data, ui_config, current_ids)
-                table_view_df = _apply_table_view(filtered_df, table_filter_query, table_sort_by)
+                table_view_df = apply_table_view(filtered_df, table_filter_query, table_sort_by)
                 next_ids = normalize_id_list(table_view_df[ID_COLUMN].astype(str).tolist()) if ID_COLUMN in table_view_df.columns else []
             else:
                 next_ids = []
@@ -2244,8 +2115,8 @@ def register_callbacks(app: Dash) -> None:
         existing_id_set = set(filtered_df[ID_COLUMN].astype(str)) if ID_COLUMN in filtered_df.columns else set()
         selected_ids = [row_id for row_id in selected_ids if row_id in existing_id_set]
 
-        table_view_df = _apply_table_view(filtered_df, table_filter_query, table_sort_by)
-        page_df, page_count = _slice_table_page(table_view_df, table_page_current, table_page_size)
+        table_view_df = apply_table_view(filtered_df, table_filter_query, table_sort_by)
+        page_df, page_count = slice_table_page(table_view_df, table_page_current, table_page_size)
         table_data = _to_records(page_df)
         table_columns = [{"name": col, "id": col} for col in filtered_df.columns]
         selected_id_set = set(selected_ids)

@@ -67,6 +67,7 @@ python app.py
 確認項目:
 - ブラウザで `http://127.0.0.1:8050` が開く
 - INSIGHTA の画面が表示される
+- CSV / Excel / SQL / PI のいずれかでデータ読み込みができる
 
 ## 5. 推奨ビルド方法
 
@@ -77,9 +78,9 @@ python .\build_windows.py
 
 このスクリプトは以下を自動で実行します。
 
-- 必要なら `pytest` 実行
+- `pytest` 実行
 - 古い `dist/` と `build/` を削除
-- `INSIGHTA.spec` を絶対パス指定してビルド
+- `INSIGHTA.spec` を使ってビルド
 - ビルド失敗時はその場で停止
 - `dist/INSIGHTA.exe` を `release/INSIGHTA/INSIGHTA.exe` にコピー
 
@@ -101,12 +102,27 @@ python .\build_windows.py --skip-tests
 - `http://127.0.0.1:8050` に INSIGHTA が表示される
 - 終了ボタンで停止できる
 
-## 7. GitHub に反映する場合の注意
+## 7. 最近の大容量データ対応について
+
+現在の INSIGHTA は、大容量データで次の構成を取っています。
+
+- 読み込んだ DataFrame 本体はサーバー側メモリキャッシュに保持
+- DataTable はサーバー側フィルタ / ソート / ページング
+- テーブル描画とグラフ描画を分離
+
+そのため、ビルド後の動作確認では次も見ておくと安全です。
+
+- Excel 読み込み後にテーブルが表示される
+- DataTable のページ送りが動く
+- ページ送りでアプリ全体が固まりにくい
+- グラフ選択とテーブル選択が相互反映する
+
+## 8. GitHub に反映する場合の注意
 
 - `dist/` と `build/` はコミットしません
 - `release/INSIGHTA/INSIGHTA.exe` は Git LFS 管理です
 - Git LFS 未導入環境では、exe の push に失敗します
-- exe の再ビルドだけなら Git LFS は不要です
+- exe のローカル再ビルド自体は Git LFS なしでも可能です
 
 確認コマンド:
 
@@ -114,7 +130,7 @@ python .\build_windows.py --skip-tests
 git lfs ls-files
 ```
 
-## 8. よくあるトラブル
+## 9. よくあるトラブル
 
 ### build が成功したように見えるのに exe が更新されていない
 - 古い `dist/INSIGHTA.exe` をコピーしている可能性があります
@@ -138,3 +154,4 @@ python -c "import sys, pandas, openpyxl; print(sys.executable); print(pandas.__v
 
 ### PI AF / PI DA が取得できない
 - PI AF Client / AF SDK のインストールと 64bit 一致を確認してください
+- PI 機能は Windows 前提です
