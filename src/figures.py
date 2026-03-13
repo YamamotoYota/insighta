@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Iterable
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -36,12 +35,29 @@ def create_scatter_figure(
     if not x_col or not y_col or x_col not in df.columns or y_col not in df.columns:
         return empty_figure("X/Y 列を選択してください。")
 
-    fig = px.scatter(
-        df,
-        x=x_col,
-        y=y_col,
-        custom_data=[id_col],
-        hover_data={id_col: True},
+    selected_set = set(normalize_id_list(selected_ids))
+    row_ids = df[id_col].astype(str)
+    selected_points = [idx for idx, row_id in enumerate(row_ids) if row_id in selected_set]
+
+    use_webgl = pd.api.types.is_numeric_dtype(df[x_col]) and pd.api.types.is_numeric_dtype(df[y_col])
+    scatter_cls = go.Scattergl if use_webgl else go.Scatter
+    fig = go.Figure(
+        data=[
+            scatter_cls(
+                x=df[x_col],
+                y=df[y_col],
+                mode="markers",
+                marker={"size": 7, "color": BASE_COLOR},
+                customdata=row_ids,
+                hovertemplate=(
+                    f"{x_col}: %{{x}}<br>{y_col}: %{{y}}<br>"
+                    f"{id_col}: %{{customdata}}<extra></extra>"
+                ),
+                selectedpoints=selected_points if selected_points else None,
+                selected={"marker": {"size": 9, "color": SELECTED_COLOR, "opacity": 1.0}},
+                unselected={"marker": {"opacity": 0.35}},
+            )
+        ]
     )
     fig.update_layout(
         dragmode="select",
@@ -49,22 +65,9 @@ def create_scatter_figure(
         clickmode="event+select",
         margin={"l": 24, "r": 24, "t": 48, "b": 72},
         legend={"orientation": "h"},
+        xaxis_title=x_col,
+        yaxis_title=y_col,
     )
-
-    selected_set = set(normalize_id_list(selected_ids))
-    if selected_set:
-        selected_points = [
-            idx for idx, row_id in enumerate(df[id_col].astype(str)) if row_id in selected_set
-        ]
-        fig.update_traces(
-            selectedpoints=selected_points,
-            selected={"marker": {"size": 9, "color": SELECTED_COLOR}},
-            unselected={"marker": {"opacity": 0.35}},
-            marker={"size": 7, "color": BASE_COLOR},
-        )
-    else:
-        fig.update_traces(marker={"size": 7, "color": BASE_COLOR})
-
     return fig
 
 

@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
+import json
+import math
 import os
 import threading
 import time
@@ -66,12 +69,16 @@ from .state import (
     build_current_data_state,
     build_default_ui_config,
     build_default_view_config,
-    dataframe_from_json,
+    dataframe_from_state,
+    has_current_dataset,
 )
 from .ui_config import DEFAULT_GRAPH_CARD_HEIGHT, graph_card_style, visible_graph_keys
 from .utils import empty_figure, format_dataset_meta, normalize_id_list, pick_column
 
 MODEL_ARTIFACT_CACHE: dict[str, dict[str, Any]] = {}
+ANALYSIS_VIEW_CACHE: dict[str, tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]] = {}
+ANALYSIS_VIEW_CACHE_ORDER: list[str] = []
+ANALYSIS_VIEW_CACHE_LIMIT = 4
 
 
 def _schedule_server_shutdown(shutdown_callable: Any) -> None:
@@ -206,6 +213,241 @@ def _pick_multi_columns(
     if selected:
         return selected
     return candidates[:fallback_count]
+
+
+def _normalize_table_page_size(value: Any) -> int:
+    """Normalize DataTable page size for backend paging."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 200
+    return max(1, min(parsed, 1000))
+
+
+def _normalize_table_page_current(value: Any) -> int:
+    """Normalize DataTable page index."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 0
+    return max(parsed, 0)
+
+
+_TABLE_FILTER_OPERATORS = [
+    ["ge ", ">="],
+    ["le ", "<="],
+    ["lt ", "<"],
+    ["gt ", ">"],
+    ["ne ", "!="],
+    ["eq ", "="],
+    ["contains "],
+    ["datestartswith "],
+]
+
+
+def _split_filter_part(filter_part: str) -> tuple[str | None, str | None, Any]:
+    """Split Dash DataTable filter query part."""
+    for operator_type in _TABLE_FILTER_OPERATORS:
+        for operator in operator_type:
+            if operator not in filter_part:
+                continue
+            name_part, value_part = filter_part.split(operator, 1)
+            name = name_part[name_part.find("{") + 1 : name_part.rfind("}")]
+            value = value_part.strip()
+            if value and value[0] == value[-1] and value[0] in ("'", '"', '`'):
+                value = value[1:-1].replace(f"\\{value[0]}", value[0])
+            else:
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass
+            return name, operator_type[0].strip(), value
+    return None, None, None
+
+
+def _apply_filter_part(df: pd.DataFrame, filter_part: str) -> pd.DataFrame:
+    """Apply one Dash DataTable filter part to dataframe."""
+    column, operator_key, raw_value = _split_filter_part(filter_part)
+    if not column or column not in df.columns or not operator_key:
+        return df
+
+    series = df[column]
+    if operator_key == "contains":
+        return df.loc[series.astype(str).str.contains(str(raw_value), case=False, na=False)]
+    if operator_key == "datestartswith":
+        return df.loc[series.astype(str).str.startswith(str(raw_value), na=False)]
+
+    if pd.api.types.is_datetime64_any_dtype(series):
+        compare_series = pd.to_datetime(series, errors="coerce")
+        compare_value = pd.to_datetime(raw_value, errors="coerce")
+    elif pd.api.types.is_numeric_dtype(series):
+        compare_series = pd.to_numeric(series, errors="coerce")
+        try:
+            compare_value = float(raw_value)
+        except (TypeError, ValueError):
+            return df.iloc[0:0]
+    else:
+        compare_series = series.astype(str)
+        compare_value = str(raw_value)
+
+    if pd.isna(compare_value):
+        return df.iloc[0:0]
+
+    operation_map = {
+        "eq": compare_series == compare_value,
+        "ne": compare_series != compare_value,
+        "lt": compare_series < compare_value,
+        "le": compare_series <= compare_value,
+        "gt": compare_series > compare_value,
+        "ge": compare_series >= compare_value,
+    }
+    mask = operation_map.get(operator_key)
+    if mask is None:
+        return df
+    return df.loc[mask.fillna(False) if hasattr(mask, 'fillna') else mask]
+
+
+def _apply_table_filter_query(df: pd.DataFrame, filter_query: str | None) -> pd.DataFrame:
+    """Apply Dash DataTable filter_query server-side."""
+    query = str(filter_query or "").strip()
+    if not query:
+        return df
+
+    result = df
+    for filter_part in [part.strip() for part in query.split(" && ") if part.strip()]:
+        result = _apply_filter_part(result, filter_part)
+    return result
+
+
+def _apply_table_sort(df: pd.DataFrame, sort_by: list[dict[str, Any]] | None) -> pd.DataFrame:
+    """Apply Dash DataTable multi-sort server-side."""
+    sort_cols = [item.get("column_id") for item in (sort_by or []) if item.get("column_id") in df.columns]
+    if not sort_cols:
+        return df
+    ascending = [str(item.get("direction", "asc")) != "desc" for item in (sort_by or []) if item.get("column_id") in df.columns]
+    return df.sort_values(sort_cols, ascending=ascending, kind="mergesort", na_position="last")
+
+
+def _apply_table_view(df: pd.DataFrame, filter_query: str | None, sort_by: list[dict[str, Any]] | None) -> pd.DataFrame:
+    """Build server-side filtered/sorted DataTable view."""
+    filtered = _apply_table_filter_query(df, filter_query)
+    return _apply_table_sort(filtered, sort_by)
+
+
+def _slice_table_page(df: pd.DataFrame, page_current: Any, page_size: Any) -> tuple[pd.DataFrame, int]:
+    """Slice DataTable page and return page count."""
+    size = _normalize_table_page_size(page_size)
+    current = _normalize_table_page_current(page_current)
+    page_count = math.ceil(len(df) / size) if len(df) else 0
+    start = current * size
+    end = start + size
+    return df.iloc[start:end].copy(), page_count
+
+
+def _analysis_view_cache_key(
+    current_data: dict[str, Any],
+    ui_config: dict[str, Any] | None,
+    selected_ids: list[str] | None,
+) -> str:
+    """Build a stable cache key for the analysis dataframe/view."""
+    config = ui_config or {}
+    metadata_columns = list((current_data or {}).get("metadata", {}).get("columns", []))
+    selected_for_cache = (
+        normalize_id_list(selected_ids)
+        if bool(config.get("treat_selected_as_missing", False))
+        else []
+    )
+    payload = {
+        "dataset_key": str((current_data or {}).get("cache_key") or (current_data or {}).get("source_name") or ""),
+        "type_overrides": normalize_type_overrides(config.get("type_overrides"), metadata_columns, id_col=ID_COLUMN),
+        "exclude_missing_rows": bool(config.get("exclude_missing_rows", False)),
+        "treat_selected_as_missing": bool(config.get("treat_selected_as_missing", False)),
+        "selected_ids": selected_for_cache,
+        "split_method": normalize_split_method(config.get("split_method")),
+        "train_ratio": normalize_train_ratio(config.get("train_ratio")),
+        "split_seed": normalize_random_seed(config.get("split_seed")),
+        "split_stratify_col": config.get("split_stratify_col") or None,
+        "split_order_col": config.get("split_order_col") or None,
+        "apply_standardize": bool(config.get("apply_standardize", False)),
+        "lag_config_text": str(config.get("lag_config_text") or ""),
+        "feature_config_text": str(config.get("feature_config_text") or ""),
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+
+def _get_cached_analysis_view(
+    cache_key: str,
+) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]] | None:
+    """Get cached filtered dataframe/modeling metadata if present."""
+    cached = ANALYSIS_VIEW_CACHE.get(cache_key)
+    if cached is None:
+        return None
+    if cache_key in ANALYSIS_VIEW_CACHE_ORDER:
+        ANALYSIS_VIEW_CACHE_ORDER.remove(cache_key)
+    ANALYSIS_VIEW_CACHE_ORDER.append(cache_key)
+    return cached
+
+
+def _store_cached_analysis_view(
+    cache_key: str,
+    filtered_df: pd.DataFrame,
+    modeling_meta: dict[str, Any],
+    runtime_metadata: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
+    """Store filtered dataframe/modeling metadata in a tiny LRU cache."""
+    ANALYSIS_VIEW_CACHE[cache_key] = (filtered_df, modeling_meta, runtime_metadata)
+    if cache_key in ANALYSIS_VIEW_CACHE_ORDER:
+        ANALYSIS_VIEW_CACHE_ORDER.remove(cache_key)
+    ANALYSIS_VIEW_CACHE_ORDER.append(cache_key)
+    while len(ANALYSIS_VIEW_CACHE_ORDER) > ANALYSIS_VIEW_CACHE_LIMIT:
+        stale_key = ANALYSIS_VIEW_CACHE_ORDER.pop(0)
+        ANALYSIS_VIEW_CACHE.pop(stale_key, None)
+    return ANALYSIS_VIEW_CACHE[cache_key]
+
+
+def _build_filtered_analysis_dataframe(
+    current_data: dict[str, Any],
+    ui_config: dict[str, Any] | None,
+    selected_ids: list[str] | None,
+) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
+    """Prepare analysis dataframe and cache reusable filtered results."""
+    cache_key = _analysis_view_cache_key(current_data, ui_config, selected_ids)
+    cached = _get_cached_analysis_view(cache_key)
+    if cached is not None:
+        return cached
+
+    config = ui_config or {}
+    typed_df = _prepare_typed_dataframe(current_data, config)
+    modeled_df, modeling_meta = _apply_modeling_config(typed_df, config)
+    filtered_df = apply_analysis_filters(
+        modeled_df,
+        exclude_missing_rows=bool(config.get("exclude_missing_rows", False)),
+        selected_ids=normalize_id_list(selected_ids),
+        treat_selected_as_missing=bool(config.get("treat_selected_as_missing", False)),
+        id_col=ID_COLUMN,
+    )
+    runtime_metadata = build_runtime_metadata(filtered_df, id_col=ID_COLUMN)
+    return _store_cached_analysis_view(cache_key, filtered_df, modeling_meta, runtime_metadata)
+
+
+def _build_dataset_meta_text(
+    current_data: dict[str, Any],
+    runtime_metadata: dict[str, Any],
+    modeling_meta: dict[str, Any],
+) -> str:
+    """Build dataset meta text without reloading the raw dataframe."""
+    source_name = current_data.get("source_name")
+    raw_meta = (current_data or {}).get("metadata") or {}
+    dataset_meta = (
+        f"{format_dataset_meta(source_name, raw_meta)} | "
+        f"分析対象行={runtime_metadata.get('row_count', 0)}"
+    )
+    split_method = _split_method_label(str(modeling_meta.get("split_method", "")))
+    train_count = int(modeling_meta.get("train_count", 0))
+    test_count = int(modeling_meta.get("test_count", 0))
+    dataset_meta += f" | 分割={split_method} ({train_count}/{test_count})"
+    return dataset_meta
 
 
 def _as_id_list(value: Any) -> list[str]:
@@ -595,7 +837,7 @@ def _prepare_typed_dataframe(
     ui_config: dict[str, Any] | None,
 ) -> pd.DataFrame:
     """Deserialize dataframe and apply dtype overrides."""
-    base_df = prepare_dataframe(dataframe_from_json(current_data["df_json"]))
+    base_df = prepare_dataframe(dataframe_from_state(current_data))
     overrides = normalize_type_overrides((ui_config or {}).get("type_overrides"), base_df.columns, id_col=ID_COLUMN)
     return apply_type_overrides(base_df, overrides, id_col=ID_COLUMN)
 
@@ -697,7 +939,7 @@ def _is_current_run_data(
     if not current_data:
         return False
 
-    has_dataset = bool(current_data.get("df_json"))
+    has_dataset = has_current_dataset(current_data)
     if not has_dataset:
         return True
 
@@ -744,13 +986,28 @@ def register_callbacks(app: Dash) -> None:
 
         current = current_data or {}
         stored_run_id = str(current.get("app_run_id") or "")
-        has_dataset = bool(current.get("df_json"))
+        has_dataset = has_current_dataset(current)
 
         if has_dataset and stored_run_id and stored_run_id != app_run_id:
             return True, True, True, True
         if has_dataset and not stored_run_id:
             return True, True, True, True
         return False, False, False, False
+
+    @app.callback(
+        Output("data-table", "page_current"),
+        Input("current-data-store", "data"),
+        Input("ui-config-store", "data"),
+        Input("data-table", "filter_query"),
+        prevent_initial_call=True,
+    )
+    def reset_table_page_on_dataset_change(
+        _current_data: dict[str, Any] | None,
+        _ui_config: dict[str, Any] | None,
+        _filter_query: str | None,
+    ) -> int:
+        """Reset backend DataTable page when dataset/filter changes."""
+        return 0
 
     @app.callback(
         Output("shutdown-status", "children"),
@@ -1039,10 +1296,10 @@ def register_callbacks(app: Dash) -> None:
         ui_config: dict[str, Any] | None,
     ) -> list[dict[str, str]]:
         """Populate dtype override table from current dataframe."""
-        if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
+        if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             return []
 
-        df = prepare_dataframe(dataframe_from_json(current_data["df_json"]))
+        df = prepare_dataframe(dataframe_from_state(current_data))
         existing_overrides = normalize_type_overrides((ui_config or {}).get("type_overrides"), df.columns, id_col=ID_COLUMN)
         rows: list[dict[str, str]] = []
         for col in df.columns:
@@ -1174,7 +1431,7 @@ def register_callbacks(app: Dash) -> None:
         existing: dict[str, Any] | None,
         ui_config: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        if not current_data or not current_data.get("df_json"):
+        if not current_data or not has_current_dataset(current_data):
             return build_default_view_config({})
 
         typed_df = _prepare_typed_dataframe(current_data, ui_config or {})
@@ -1271,7 +1528,7 @@ def register_callbacks(app: Dash) -> None:
         split_stratify_value = cfg.get("split_stratify_col")
         split_order_value = cfg.get("split_order_col")
 
-        if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
+        if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             empty_opts: list[dict[str, str]] = []
             return (
                 empty_opts,
@@ -1388,7 +1645,7 @@ def register_callbacks(app: Dash) -> None:
             else ("回帰モデルの目的変数を選択してください。" if task == "regression" else "分類モデルの目的変数を選択してください。")
         )
 
-        if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
+        if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             return [], [], None, [], (not requires_target), help_text
 
         try:
@@ -1561,7 +1818,7 @@ def register_callbacks(app: Dash) -> None:
         q_warning_limit_percent: Any,
         q_alarm_limit_percent: Any,
     ) -> tuple[str | Any, str]:
-        if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
+        if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             return no_update, "先にデータを読み込んでください。"
 
         model_key = str(model_method or default_model_key())
@@ -1644,7 +1901,7 @@ def register_callbacks(app: Dash) -> None:
         if trigger == "current-data-store":
             return html.Div(), "", _model_store_payload(None)
 
-        if not _is_current_run_data(current_data, app_run_data) or not current_data or not current_data.get("df_json"):
+        if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             return html.Div(), "先にデータを読み込んでください。", _model_store_payload(None)
 
         model_key = str(model_method or default_model_key())
@@ -1796,21 +2053,31 @@ def register_callbacks(app: Dash) -> None:
         Output("export-table-status", "children"),
         Input("export-table-csv-button", "n_clicks"),
         Input("export-table-xlsx-button", "n_clicks"),
-        State("data-table", "data"),
         State("current-data-store", "data"),
+        State("ui-config-store", "data"),
+        State("selected-ids-store", "data"),
+        State("data-table", "filter_query"),
+        State("data-table", "sort_by"),
         prevent_initial_call=True,
     )
     def export_processed_table(
         _csv_clicks: int | None,
         _xlsx_clicks: int | None,
-        table_data: list[dict[str, Any]] | None,
         current_data: dict[str, Any] | None,
+        ui_config: dict[str, Any] | None,
+        selected_ids: list[str] | None,
+        table_filter_query: str | None,
+        table_sort_by: list[dict[str, Any]] | None,
     ) -> tuple[Any, str]:
         trigger = callback_context.triggered_id
-        if not table_data:
+        if not current_data or not has_current_dataset(current_data):
             return no_update, "出力対象のデータテーブルが空です。"
 
-        df = pd.DataFrame(table_data)
+        filtered_df, _modeling_meta, _runtime_metadata = _build_filtered_analysis_dataframe(current_data, ui_config, selected_ids)
+        df = _apply_table_view(filtered_df, table_filter_query, table_sort_by)
+        if df.empty:
+            return no_update, "出力対象のデータテーブルが空です。"
+
         source_name = str((current_data or {}).get("source_name") or "insighta_data")
         safe_stem = (
             source_name.replace("\\", "_")
@@ -1855,8 +2122,10 @@ def register_callbacks(app: Dash) -> None:
         State("hist-graph", "figure"),
         State("box-graph", "figure"),
         State("keyboard-state-store", "data"),
-        State("data-table", "derived_virtual_row_ids"),
         State("data-table", "data"),
+        State("ui-config-store", "data"),
+        State("data-table", "filter_query"),
+        State("data-table", "sort_by"),
         State("url-location", "search"),
         prevent_initial_call=True,
     )
@@ -1873,8 +2142,10 @@ def register_callbacks(app: Dash) -> None:
         hist_figure: dict[str, Any] | None,
         box_figure: dict[str, Any] | None,
         keyboard_state: dict[str, Any] | None,
-        visible_row_ids: list[object] | None,
         table_data: list[dict[str, Any]] | None,
+        ui_config: dict[str, Any] | None,
+        table_filter_query: str | None,
+        table_sort_by: list[dict[str, Any]] | None,
         url_search: str | None,
     ) -> list[str] | Any:
         current_ids = normalize_id_list(current_selected_ids)
@@ -1886,29 +2157,32 @@ def register_callbacks(app: Dash) -> None:
         elif trigger == "clear-selection-button":
             next_ids = []
         elif trigger == "table-select-all-check":
-            # 別ウィンドウ初期表示時に checklist の初期値 [] が流れてきて
-            # 共有選択を消してしまうケースを回避する。
             if (
                 is_graph_window
                 and current_ids
                 and (not select_all_value)
-                and not visible_row_ids
+                and not table_data
             ):
                 return no_update
             if select_all_value and "all" in select_all_value:
-                next_ids = normalize_id_list(visible_row_ids)
+                if not current_data or not has_current_dataset(current_data):
+                    return no_update
+                filtered_df, _modeling_meta, _runtime_metadata = _build_filtered_analysis_dataframe(current_data, ui_config, current_ids)
+                table_view_df = _apply_table_view(filtered_df, table_filter_query, table_sort_by)
+                next_ids = normalize_id_list(table_view_df[ID_COLUMN].astype(str).tolist()) if ID_COLUMN in table_view_df.columns else []
             else:
                 next_ids = []
         elif trigger == "data-table":
-            # 別ウィンドウでは DataTable 初期化の空選択イベントで共有選択が消えやすいため、
-            # 空選択は無視する（全解除は「選択をクリア」ボタンで実施）。
+            page_ids = normalize_id_list([row.get(ID_COLUMN) for row in (table_data or []) if isinstance(row, dict) and ID_COLUMN in row])
             if (
                 is_graph_window
                 and current_ids
                 and (table_selected_row_ids is None or len(table_selected_row_ids) == 0)
+                and not page_ids
             ):
                 return no_update
-            next_ids = normalize_id_list(table_selected_row_ids)
+            page_selected_ids = normalize_id_list(table_selected_row_ids)
+            next_ids = normalize_id_list([row_id for row_id in current_ids if row_id not in set(page_ids)] + page_selected_ids)
         elif trigger == "scatter-graph":
             if scatter_selected_data is None:
                 return no_update
@@ -1937,6 +2211,51 @@ def register_callbacks(app: Dash) -> None:
         return next_ids
 
     @app.callback(
+        Output("data-table", "data"),
+        Output("data-table", "columns"),
+        Output("data-table", "selected_row_ids"),
+        Output("data-table", "selected_rows"),
+        Output("data-table", "page_count"),
+        Output("dataset-meta", "children"),
+        Input("current-data-store", "data"),
+        Input("selected-ids-store", "data"),
+        Input("ui-config-store", "data"),
+        Input("app-run-store", "data"),
+        Input("data-table", "page_current"),
+        Input("data-table", "page_size"),
+        Input("data-table", "sort_by"),
+        Input("data-table", "filter_query"),
+    )
+    def render_table_view(
+        current_data: dict[str, Any] | None,
+        selected_ids: list[str] | None,
+        ui_config: dict[str, Any] | None,
+        app_run_data: dict[str, Any] | None,
+        table_page_current: int | None,
+        table_page_size: int | None,
+        table_sort_by: list[dict[str, Any]] | None,
+        table_filter_query: str | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[str], list[int], int, str]:
+        if not current_data or not has_current_dataset(current_data) or not _is_current_run_data(current_data, app_run_data):
+            return [], [], [], [], 0, format_dataset_meta(None, {})
+
+        selected_ids = normalize_id_list(selected_ids)
+        filtered_df, modeling_meta, runtime_metadata = _build_filtered_analysis_dataframe(current_data, ui_config, selected_ids)
+        existing_id_set = set(filtered_df[ID_COLUMN].astype(str)) if ID_COLUMN in filtered_df.columns else set()
+        selected_ids = [row_id for row_id in selected_ids if row_id in existing_id_set]
+
+        table_view_df = _apply_table_view(filtered_df, table_filter_query, table_sort_by)
+        page_df, page_count = _slice_table_page(table_view_df, table_page_current, table_page_size)
+        table_data = _to_records(page_df)
+        table_columns = [{"name": col, "id": col} for col in filtered_df.columns]
+        selected_id_set = set(selected_ids)
+        page_row_ids = page_df[ID_COLUMN].astype(str).tolist() if ID_COLUMN in page_df.columns else []
+        selected_row_ids = [row_id for row_id in page_row_ids if row_id in selected_id_set]
+        selected_rows = [idx for idx, row_id in enumerate(page_row_ids) if row_id in selected_id_set]
+        dataset_meta = _build_dataset_meta_text(current_data, runtime_metadata, modeling_meta)
+        return table_data, table_columns, selected_row_ids, selected_rows, page_count, dataset_meta
+
+    @app.callback(
         Output("scatter-graph", "figure"),
         Output("hist-graph", "figure"),
         Output("box-graph", "figure"),
@@ -1944,11 +2263,6 @@ def register_callbacks(app: Dash) -> None:
         Output("summary-panel", "children"),
         Output("ranking-table", "data"),
         Output("ranking-table", "columns"),
-        Output("data-table", "data"),
-        Output("data-table", "columns"),
-        Output("data-table", "selected_row_ids"),
-        Output("data-table", "selected_rows"),
-        Output("dataset-meta", "children"),
         Output("modeling-summary", "children"),
         Output("selection-message", "children"),
         Output("table-section", "style"),
@@ -1991,13 +2305,10 @@ def register_callbacks(app: Dash) -> None:
         show_table = "show" in set(table_display_check or [])
         table_section_style = {"display": "block"} if show_table else {"display": "none"}
 
-        has_data = bool(current_data and current_data.get("df_json") and _is_current_run_data(current_data, app_run_data))
+        has_data = bool(current_data and has_current_dataset(current_data) and _is_current_run_data(current_data, app_run_data))
         if not has_data:
-            empty_data: list[dict[str, Any]] = []
-            empty_columns: list[dict[str, str]] = []
-            no_data_meta = format_dataset_meta(None, {})
             empty_style = _window_link_style(False)
-            hidden_card = _graph_card_style(False)
+            hidden_card = graph_card_style(visible=False, height=DEFAULT_GRAPH_CARD_HEIGHT)
             return (
                 empty_figure("データを読み込むと散布図を表示できます。"),
                 empty_figure("データを読み込むとヒストグラムを表示できます。"),
@@ -2006,11 +2317,6 @@ def register_callbacks(app: Dash) -> None:
                 html.Div("CSV/ExcelアップロードまたはSQL実行でデータを読み込んでください。"),
                 [],
                 _ranking_columns(),
-                empty_data,
-                empty_columns,
-                [],
-                [],
-                no_data_meta,
                 html.Div(),
                 "未選択 (No selection)",
                 table_section_style,
@@ -2027,27 +2333,14 @@ def register_callbacks(app: Dash) -> None:
                 "データを読み込むと、上部リンクから各グラフを別ウィンドウ表示できます。",
             )
 
-        raw_df = prepare_dataframe(dataframe_from_json(current_data["df_json"]))
-        source_name = current_data.get("source_name")
         selected_ids = normalize_id_list(selected_ids)
-
-        typed_df = _prepare_typed_dataframe(current_data, config)
-        modeled_df, modeling_meta = _apply_modeling_config(typed_df, config)
-        all_cols: list[str] = _plot_columns(list(modeled_df.columns))
+        filtered_df, modeling_meta, runtime_metadata = _build_filtered_analysis_dataframe(current_data, config, selected_ids)
+        all_cols: list[str] = _plot_columns(list(runtime_metadata.get("columns", [])))
+        numeric_cols: list[str] = list(runtime_metadata.get("numeric_cols", []))
 
         exclude_missing_rows = bool(config.get("exclude_missing_rows", False))
         treat_selected_as_missing = bool(config.get("treat_selected_as_missing", False))
-        filtered_df = apply_analysis_filters(
-            modeled_df,
-            exclude_missing_rows=exclude_missing_rows,
-            selected_ids=selected_ids,
-            treat_selected_as_missing=treat_selected_as_missing,
-            id_col=ID_COLUMN,
-        )
-        runtime_metadata = build_runtime_metadata(filtered_df, id_col=ID_COLUMN)
-        numeric_cols: list[str] = list(runtime_metadata.get("numeric_cols", []))
-
-        existing_id_set = set(filtered_df[ID_COLUMN].astype(str))
+        existing_id_set = set(filtered_df[ID_COLUMN].astype(str)) if ID_COLUMN in filtered_df.columns else set()
         selected_ids = [row_id for row_id in selected_ids if row_id in existing_id_set]
 
         x_col = pick_column(per_view.get("x_col"), all_cols, 0)
@@ -2055,11 +2348,6 @@ def register_callbacks(app: Dash) -> None:
         hist_col = pick_column(per_view.get("hist_col"), all_cols, 0)
         box_col = pick_column(per_view.get("box_col"), numeric_cols, 0)
         matrix_cols = _pick_multi_columns(per_view.get("matrix_cols"), numeric_cols, min(len(numeric_cols), 4))
-
-        scatter_figure = create_scatter_figure(filtered_df, x_col, y_col, selected_ids)
-        hist_figure = create_distribution_figure(filtered_df, hist_col, selected_ids, view_mode="hist")
-        box_figure = create_distribution_figure(filtered_df, box_col, selected_ids, view_mode="box")
-        matrix_figure = create_scatter_matrix_figure(filtered_df, matrix_cols, selected_ids)
 
         summary = _build_summary_panel(filtered_df, selected_ids, numeric_cols)
 
@@ -2071,22 +2359,6 @@ def register_callbacks(app: Dash) -> None:
                     lambda value: "" if pd.isna(value) else f"{value:.4g}"
                 )
         ranking_data = ranking_display.to_dict("records")
-
-        table_data = _to_records(filtered_df)
-        table_columns = [{"name": col, "id": col} for col in filtered_df.columns]
-        selected_id_set = set(selected_ids)
-        selected_rows = [idx for idx, row_id in enumerate(filtered_df[ID_COLUMN].astype(str)) if row_id in selected_id_set]
-
-        raw_meta = build_runtime_metadata(raw_df, id_col=ID_COLUMN)
-        filtered_meta = build_runtime_metadata(filtered_df, id_col=ID_COLUMN)
-        dataset_meta = (
-            f"{format_dataset_meta(source_name, raw_meta)} | "
-            f"分析対象行={filtered_meta['row_count']}"
-        )
-        split_method = _split_method_label(str(modeling_meta.get("split_method", "")))
-        train_count = int(modeling_meta.get("train_count", 0))
-        test_count = int(modeling_meta.get("test_count", 0))
-        dataset_meta += f" | 分割={split_method} ({train_count}/{test_count})"
         modeling_summary = _build_modeling_summary(modeling_meta)
 
         if ranking_message:
@@ -2104,8 +2376,12 @@ def register_callbacks(app: Dash) -> None:
         box_link_style = _window_link_style("box" in visible_graphs)
         matrix_link_style = _window_link_style("matrix" in visible_graphs)
 
+        scatter_enabled = "scatter" in visible_graphs
+        hist_enabled = "hist" in visible_graphs
+        box_enabled = "box" in visible_graphs
+        matrix_enabled = "matrix" in visible_graphs
+
         if requested_graph is None:
-            # メイン画面ではグラフを重ねず、別ウィンドウで表示する運用。
             scatter_visible = False
             hist_visible = False
             box_visible = False
@@ -2115,14 +2391,31 @@ def register_callbacks(app: Dash) -> None:
             else:
                 graph_window_message = "表示対象グラフが未選択です。チェックボックスで選択してください。"
         else:
-            scatter_visible = requested_graph == "scatter" and ("scatter" in visible_graphs)
-            hist_visible = requested_graph == "hist" and ("hist" in visible_graphs)
-            box_visible = requested_graph == "box" and ("box" in visible_graphs)
-            matrix_visible = requested_graph == "matrix" and ("matrix" in visible_graphs)
+            scatter_visible = requested_graph == "scatter" and scatter_enabled
+            hist_visible = requested_graph == "hist" and hist_enabled
+            box_visible = requested_graph == "box" and box_enabled
+            matrix_visible = requested_graph == "matrix" and matrix_enabled
             if not (scatter_visible or hist_visible or box_visible or matrix_visible):
                 graph_window_message = "このグラフ種別は現在非表示設定です。メイン画面でチェックをONにしてください。"
             else:
                 graph_window_message = f"{requested_graph} グラフを別ウィンドウ表示中です。"
+
+        scatter_figure = (
+            create_scatter_figure(filtered_df, x_col, y_col, selected_ids)
+            if scatter_visible else empty_figure("散布図は別ウィンドウで表示します。")
+        )
+        hist_figure = (
+            create_distribution_figure(filtered_df, hist_col, selected_ids, view_mode="hist")
+            if hist_visible else empty_figure("ヒストグラムは別ウィンドウで表示します。")
+        )
+        box_figure = (
+            create_distribution_figure(filtered_df, box_col, selected_ids, view_mode="box")
+            if box_visible else empty_figure("箱ひげ図は別ウィンドウで表示します。")
+        )
+        matrix_figure = (
+            create_scatter_matrix_figure(filtered_df, matrix_cols, selected_ids)
+            if matrix_visible else empty_figure("散布図行列は別ウィンドウで表示します。")
+        )
 
         return (
             scatter_figure,
@@ -2132,11 +2425,6 @@ def register_callbacks(app: Dash) -> None:
             summary,
             ranking_data,
             _ranking_columns(),
-            table_data,
-            table_columns,
-            selected_ids,
-            selected_rows,
-            dataset_meta,
             modeling_summary,
             selection_message,
             table_section_style,
@@ -2152,6 +2440,9 @@ def register_callbacks(app: Dash) -> None:
             graph_card_style(visible=matrix_visible, height=DEFAULT_GRAPH_CARD_HEIGHT),
             graph_window_message,
         )
+
+
+
 
 
 
