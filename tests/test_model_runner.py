@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.model_runner import (
     default_hyperparam_grid_text,
@@ -38,6 +39,7 @@ def test_parse_param_text_invalid_json() -> None:
 def test_model_requires_target_flags() -> None:
     assert model_requires_target("reg_linear") is True
     assert model_requires_target("cls_rf") is True
+    assert model_requires_target("ts_arima") is True
     assert model_requires_target("unsup_pca") is False
 
 
@@ -191,4 +193,44 @@ def test_unsup_pca_t2q_scales_limits_above_100_and_uses_selected_samples() -> No
     assert set(importance_tables["T2寄与度"]["basis"]) == {importance_tables["T2寄与度"]["basis"].iloc[0]}
     assert "選択中サンプル" in importance_tables["T2寄与度"]["basis"].iloc[0]
     assert "選択中サンプル" in importance_tables["Q寄与度"]["basis"].iloc[0]
+
+
+@pytest.mark.parametrize(
+    ("model_key", "hyperparams"),
+    [
+        ("ts_arima", {"order": [1, 1, 1], "trend": "n"}),
+        ("ts_sarima", {"order": [1, 1, 1], "seasonal_order": [1, 0, 1, 12], "trend": "n"}),
+        ("ts_ewma", {"alpha": 0.2, "limit_sigma": 3.0}),
+        ("ts_cusum", {"k": 0.5, "h": 5.0}),
+    ],
+)
+def test_time_series_models_run(model_key: str, hyperparams: dict[str, object]) -> None:
+    if model_key in {"ts_arima", "ts_sarima"}:
+        pytest.importorskip("statsmodels")
+    timeline = np.arange(60)
+    df = pd.DataFrame(
+        {
+            "id": timeline.astype(str),
+            "time": timeline,
+            "value": 10.0 + 0.05 * timeline + np.sin(2 * np.pi * timeline / 12.0),
+        }
+    )
+
+    result = run_model(
+        df,
+        model_key=model_key,
+        feature_cols=[],
+        target_col="value",
+        split_method="sequential",
+        train_ratio=0.8,
+        random_seed=42,
+        split_stratify_col=None,
+        split_order_col="time",
+        hyperparams=hyperparams,
+    )
+
+    assert result["task"] == "timeseries"
+    assert result["model_label"]
+    assert len(result["figures"]) >= 2
+    assert not result["metrics"].empty
 

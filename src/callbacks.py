@@ -242,6 +242,9 @@ def _analysis_view_cache_key(
         "apply_standardize": bool(config.get("apply_standardize", False)),
         "lag_config_text": str(config.get("lag_config_text") or ""),
         "feature_config_text": str(config.get("feature_config_text") or ""),
+        "sma_config_text": str(config.get("sma_config_text") or ""),
+        "ema_config_text": str(config.get("ema_config_text") or ""),
+        "stl_config_text": str(config.get("stl_config_text") or ""),
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
@@ -546,6 +549,9 @@ def _build_modeling_summary(metadata: dict[str, Any]) -> html.Div:
     standardized_cols = metadata.get("standardized_cols", [])
     lag_cols = metadata.get("lag_cols", [])
     feature_cols = metadata.get("feature_cols", [])
+    sma_cols = metadata.get("sma_cols", [])
+    ema_cols = metadata.get("ema_cols", [])
+    stl_cols = metadata.get("stl_cols", [])
 
     if standardized_cols:
         items.append(f"標準化列: {len(standardized_cols)}")
@@ -553,6 +559,12 @@ def _build_modeling_summary(metadata: dict[str, Any]) -> html.Div:
         items.append(f"追加ラグ列: {len(lag_cols)}")
     if feature_cols:
         items.append(f"追加特徴量: {len(feature_cols)}")
+    if sma_cols:
+        items.append(f"単純移動平均列: {len(sma_cols)}")
+    if ema_cols:
+        items.append(f"指数移動平均列: {len(ema_cols)}")
+    if stl_cols:
+        items.append(f"STL分解列: {len(stl_cols)}")
 
     warnings: list[str] = list(metadata.get("warnings", []))
     warning_lines = [html.Li(msg) for msg in warnings[:8]]
@@ -729,6 +741,9 @@ def _apply_modeling_config(
         standardize=bool(cfg.get("apply_standardize", False)),
         lag_text=str(cfg.get("lag_config_text") or ""),
         feature_text=str(cfg.get("feature_config_text") or ""),
+        sma_text=str(cfg.get("sma_config_text") or ""),
+        ema_text=str(cfg.get("ema_config_text") or ""),
+        stl_text=str(cfg.get("stl_config_text") or ""),
     )
 
 
@@ -1199,6 +1214,9 @@ def register_callbacks(app: Dash) -> None:
         Input("standardize-check", "value"),
         Input("lag-config-text", "value"),
         Input("feature-config-text", "value"),
+        Input("sma-config-text", "value"),
+        Input("ema-config-text", "value"),
+        Input("stl-config-text", "value"),
         Input("show-graphs-button", "n_clicks"),
         Input("url-location", "search"),
         State("ui-config-store", "data"),
@@ -1216,6 +1234,9 @@ def register_callbacks(app: Dash) -> None:
         standardize_check: list[str] | None,
         lag_config_text: str | None,
         feature_config_text: str | None,
+        sma_config_text: str | None,
+        ema_config_text: str | None,
+        stl_config_text: str | None,
         _show_graphs_clicks: int | None,
         url_search: str | None,
         existing: dict[str, Any] | None,
@@ -1240,6 +1261,9 @@ def register_callbacks(app: Dash) -> None:
                 config["apply_standardize"] = bool(existing.get("apply_standardize", False))
                 config["lag_config_text"] = str(existing.get("lag_config_text") or "")
                 config["feature_config_text"] = str(existing.get("feature_config_text") or "")
+                config["sma_config_text"] = str(existing.get("sma_config_text") or "")
+                config["ema_config_text"] = str(existing.get("ema_config_text") or "")
+                config["stl_config_text"] = str(existing.get("stl_config_text") or "")
             if _query_requests_graphs(url_search):
                 config["show_graphs"] = True
             return config
@@ -1271,6 +1295,12 @@ def register_callbacks(app: Dash) -> None:
             config["lag_config_text"] = str(lag_config_text)
         if feature_config_text is not None:
             config["feature_config_text"] = str(feature_config_text)
+        if sma_config_text is not None:
+            config["sma_config_text"] = str(sma_config_text)
+        if ema_config_text is not None:
+            config["ema_config_text"] = str(ema_config_text)
+        if stl_config_text is not None:
+            config["stl_config_text"] = str(stl_config_text)
 
         if trigger == "show-graphs-button":
             config["show_graphs"] = not bool(config.get("show_graphs", False))
@@ -1346,6 +1376,9 @@ def register_callbacks(app: Dash) -> None:
         Output("standardize-check", "value"),
         Output("lag-config-text", "value"),
         Output("feature-config-text", "value"),
+        Output("sma-config-text", "value"),
+        Output("ema-config-text", "value"),
+        Output("stl-config-text", "value"),
         Input("current-data-store", "data"),
         Input("app-run-store", "data"),
         Input("dtype-config-table", "data"),
@@ -1381,6 +1414,9 @@ def register_callbacks(app: Dash) -> None:
         list[str],
         str,
         str,
+        str,
+        str,
+        str,
     ]:
         cfg = ui_config or {}
         view_cfg = view_config or {}
@@ -1396,6 +1432,9 @@ def register_callbacks(app: Dash) -> None:
         split_seed = normalize_random_seed(cfg.get("split_seed"))
         lag_config_text = str(cfg.get("lag_config_text") or "")
         feature_config_text = str(cfg.get("feature_config_text") or "")
+        sma_config_text = str(cfg.get("sma_config_text") or "")
+        ema_config_text = str(cfg.get("ema_config_text") or "")
+        stl_config_text = str(cfg.get("stl_config_text") or "")
         split_stratify_value = cfg.get("split_stratify_col")
         split_order_value = cfg.get("split_order_col")
 
@@ -1424,6 +1463,9 @@ def register_callbacks(app: Dash) -> None:
                 standardize_values,
                 lag_config_text,
                 feature_config_text,
+                sma_config_text,
+                ema_config_text,
+                stl_config_text,
             )
 
         effective_cfg = dict(cfg)
@@ -1476,6 +1518,9 @@ def register_callbacks(app: Dash) -> None:
             standardize_values,
             lag_config_text,
             feature_config_text,
+            sma_config_text,
+            ema_config_text,
+            stl_config_text,
         )
 
     @app.callback(
@@ -1510,11 +1555,14 @@ def register_callbacks(app: Dash) -> None:
         model_key = str(model_method or default_model_key())
         requires_target = model_requires_target(model_key)
         task = model_task(model_key)
-        help_text = (
-            "教師なしモデルでは目的変数は使用しません。"
-            if not requires_target
-            else ("回帰モデルの目的変数を選択してください。" if task == "regression" else "分類モデルの目的変数を選択してください。")
-        )
+        if not requires_target:
+            help_text = "教師なしモデルでは目的変数は使用しません。"
+        elif task == "regression":
+            help_text = "回帰モデルの目的変数を選択してください。数値列のみが候補です。"
+        elif task == "classification":
+            help_text = "分類モデルの目的変数を選択してください。"
+        else:
+            help_text = "時系列モデルでは目的変数となる数値の時系列列を選択してください。説明変数は使いません。順序列は『前後分割の順序列』を使います。"
 
         if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             return [], [], None, [], (not requires_target), help_text
@@ -1525,20 +1573,29 @@ def register_callbacks(app: Dash) -> None:
             return [], [], None, [], (not requires_target), help_text
 
         candidate_cols = [col for col in _plot_columns(list(runtime_df.columns)) if col != ID_COLUMN]
-        target_options = [{"label": col, "value": col} for col in candidate_cols]
+        numeric_target_candidates = [
+            col
+            for col in candidate_cols
+            if pd.api.types.is_numeric_dtype(runtime_df[col]) or pd.api.types.is_bool_dtype(runtime_df[col])
+        ]
+        target_candidates = numeric_target_candidates if task in {"regression", "timeseries"} else candidate_cols
+        target_options = [{"label": col, "value": col} for col in target_candidates]
 
         if requires_target:
-            target_value = pick_column(current_target, candidate_cols, 0)
+            target_value = pick_column(current_target, target_candidates, 0)
         else:
-            target_value = current_target if current_target in candidate_cols else None
+            target_value = current_target if current_target in target_candidates else None
 
-        feature_candidates = candidate_cols.copy()
-        if requires_target and target_value in feature_candidates:
-            feature_candidates = [col for col in feature_candidates if col != target_value]
+        if task == "timeseries":
+            feature_candidates: list[str] = []
+        else:
+            feature_candidates = candidate_cols.copy()
+            if requires_target and target_value in feature_candidates:
+                feature_candidates = [col for col in feature_candidates if col != target_value]
         feature_options = [{"label": col, "value": col} for col in feature_candidates]
 
         selected_features = [col for col in (current_features or []) if col in feature_candidates]
-        if not selected_features:
+        if not selected_features and task != "timeseries":
             selected_features = feature_candidates[: min(8, len(feature_candidates))]
 
         return (
@@ -1598,8 +1655,11 @@ def register_callbacks(app: Dash) -> None:
     ) -> Any:
         """Show candidate combination estimate and warning before CV suggestion."""
         model_key = str(model_method or default_model_key())
-        if model_task(model_key) == "unsupervised":
+        task = model_task(model_key)
+        if task == "unsupervised":
             return "教師なしモデルはCV探索を使わず、学習データのヒューリスティクスで推奨値を計算します。"
+        if task == "timeseries":
+            return "時系列モデルはCV探索ではなく、学習データのAICまたは監視用ヒューリスティクスで推奨値を計算します。"
 
         grid, err = parse_param_grid_text(candidate_grid_text)
         if err:
@@ -1726,6 +1786,7 @@ def register_callbacks(app: Dash) -> None:
                 cv_sample_ratio=cv_sample_ratio,
                 cv_sample_max_rows=cv_sample_max_rows,
                 preset_params=pca_overrides,
+                selected_ids=selected_ids,
             )
             return format_param_text(suggested), f"{model_label(model_key)} 推奨値: {summary}"
         except Exception as exc:

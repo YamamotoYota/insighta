@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.modeling import apply_modeling_preparation
 
@@ -65,3 +66,45 @@ def test_modeling_preparation_standardizes_using_train_data() -> None:
     train_values = modeled.iloc[:4]["value"]
     assert abs(float(train_values.mean())) < 1e-9
     assert np.isclose(float(train_values.std(ddof=0)), 1.0)
+
+
+def test_modeling_preparation_adds_sma_ema_stl_columns() -> None:
+    pytest.importorskip("statsmodels")
+    df = pd.DataFrame(
+        {
+            "id": [str(i) for i in range(1, 25)],
+            "time": list(range(1, 25)),
+            "temp": [10.0 + np.sin(i / 2.0) + i * 0.1 for i in range(24)],
+        }
+    )
+
+    modeled, meta = apply_modeling_preparation(
+        df,
+        split_method="sequential",
+        train_ratio=0.75,
+        random_seed=1,
+        stratify_col=None,
+        order_col="time",
+        standardize=False,
+        lag_text="",
+        feature_text="",
+        sma_text="temp: 3",
+        ema_text="temp: 4",
+        stl_text="temp: 6",
+    )
+
+    expected_cols = {
+        "temp_sma3",
+        "temp_ema4",
+        "temp_stl_p6_trend",
+        "temp_stl_p6_seasonal",
+        "temp_stl_p6_resid",
+    }
+    assert expected_cols.issubset(set(modeled.columns))
+    assert "temp_sma3" in meta["sma_cols"]
+    assert "temp_ema4" in meta["ema_cols"]
+    assert set(meta["stl_cols"]) == {
+        "temp_stl_p6_trend",
+        "temp_stl_p6_seasonal",
+        "temp_stl_p6_resid",
+    }

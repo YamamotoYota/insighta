@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from itertools import product
 from typing import Any
 
 import numpy as np
@@ -39,6 +40,26 @@ MODEL_DEFINITIONS: dict[str, dict[str, str]] = {
         "task": "unsupervised",
         "label": "教師なし: ICA",
         "description": "独立成分分析で非ガウスな構造を抽出し、スコアと Mixing matrix を確認します。",
+    },
+    "ts_arima": {
+        "task": "timeseries",
+        "label": "時系列: ARIMA",
+        "description": "非季節の自己回帰移動平均モデルです。前後分割した学習データで当てはめ、テスト区間を予測します。",
+    },
+    "ts_sarima": {
+        "task": "timeseries",
+        "label": "時系列: SARIMA",
+        "description": "季節性を含む自己回帰移動平均モデルです。季節周期を含む次数を指定して予測します。",
+    },
+    "ts_ewma": {
+        "task": "timeseries",
+        "label": "時系列: EWMA",
+        "description": "指数加重移動平均で系列の平均シフトを監視します。学習区間の平均と標準偏差から管理限界を計算します。",
+    },
+    "ts_cusum": {
+        "task": "timeseries",
+        "label": "時系列: CUSUM",
+        "description": "累積和で平均の小さなズレを監視します。学習区間を基準に正側/負側の累積統計量を可視化します。",
     },
     "reg_linear": {
         "task": "regression",
@@ -246,7 +267,7 @@ def model_description(model_key: str) -> str:
 
 def model_requires_target(model_key: str) -> bool:
     """Return True if selected model requires target variable."""
-    return model_task(model_key) in {"regression", "classification"}
+    return model_task(model_key) in {"regression", "classification", "timeseries"}
 
 
 def _normalize_probability_param(value: Any, default_value: float) -> float:
@@ -447,6 +468,10 @@ def default_hyperparams(model_key: str) -> dict[str, Any]:
             "q_alarm_limit_percent": 99.0,
         },
         "unsup_ica": {"n_components": 2, "max_iter": 500, "tol": 1e-4},
+        "ts_arima": {"order": [1, 1, 1], "trend": "n"},
+        "ts_sarima": {"order": [1, 1, 1], "seasonal_order": [1, 0, 1, 12], "trend": "n"},
+        "ts_ewma": {"alpha": 0.2, "limit_sigma": 3.0},
+        "ts_cusum": {"k": 0.5, "h": 5.0},
         "reg_linear": {"fit_intercept": True},
         "reg_pls": {"n_components": 2, "max_iter": 500},
         "reg_lgbm": {"n_estimators": 300, "learning_rate": 0.05, "num_leaves": 31},
@@ -462,6 +487,23 @@ def default_hyperparams(model_key: str) -> dict[str, Any]:
 def hyperparam_grid(model_key: str) -> dict[str, list[Any]]:
     """Return lightweight CV search grids by model."""
     grids: dict[str, dict[str, list[Any]]] = {
+        "ts_arima": {
+            "order": [[1, 1, 0], [1, 1, 1], [2, 1, 1], [1, 0, 1]],
+            "trend": ["n", "c"],
+        },
+        "ts_sarima": {
+            "order": [[1, 1, 1], [2, 1, 1]],
+            "seasonal_order": [[1, 0, 1, 12], [0, 1, 1, 12], [1, 1, 0, 12]],
+            "trend": ["n", "c"],
+        },
+        "ts_ewma": {
+            "alpha": [0.1, 0.2, 0.3],
+            "limit_sigma": [2.5, 3.0, 3.5],
+        },
+        "ts_cusum": {
+            "k": [0.25, 0.5, 0.75],
+            "h": [4.0, 5.0, 6.0],
+        },
         "reg_linear": {"fit_intercept": [True, False]},
         "reg_pls": {"n_components": [1, 2, 3, 4]},
         "reg_lgbm": {
@@ -514,6 +556,7 @@ def suggest_hyperparameters(
     cv_sample_ratio: float | int | None = 1.0,
     cv_sample_max_rows: int | float | None = None,
     preset_params: dict[str, Any] | None = None,
+    selected_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Suggest hyperparameters from training data.
 
@@ -540,6 +583,24 @@ def suggest_hyperparameters(
             model_key,
             prepared["x_train"],
             random_seed=prepared["random_seed"],
+            params=preset_params,
+        )
+        return params, summary
+
+    if task == "timeseries":
+        prepared = _prepare_time_series_dataset(
+            df,
+            target_col=target_col,
+            split_method=split_method,
+            train_ratio=train_ratio,
+            random_seed=random_seed,
+            split_order_col=split_order_col,
+        )
+        grid = dict(candidate_grid) if candidate_grid is not None else hyperparam_grid(model_key)
+        params, summary = _suggest_time_series_params(
+            model_key,
+            prepared,
+            candidate_grid=grid,
             params=preset_params,
         )
         return params, summary
@@ -706,6 +767,16 @@ def run_model(
             selected_ids=selected_ids,
         )
         return _run_unsupervised_model(model_key, prepared, merged_params)
+    if task == "timeseries":
+        prepared = _prepare_time_series_dataset(
+            df,
+            target_col=target_col,
+            split_method=split_method,
+            train_ratio=train_ratio,
+            random_seed=random_seed,
+            split_order_col=split_order_col,
+        )
+        return _run_time_series_model(model_key, prepared, merged_params)
 
     prepared = _prepare_supervised_dataset(
         df,
@@ -879,6 +950,365 @@ def _prepare_supervised_dataset(
         "train_ratio": safe_ratio,
         "random_seed": safe_seed,
     }
+
+
+def _normalize_fraction_param(
+    value: Any,
+    default_value: float,
+    *,
+    min_value: float = 1e-4,
+    max_value: float = 0.999,
+) -> float:
+    """Normalize a fraction-like parameter into a safe open interval."""
+    try:
+        parsed = float(value) if value is not None else float(default_value)
+    except (TypeError, ValueError):
+        parsed = float(default_value)
+    return float(min(max(parsed, min_value), max_value))
+
+
+def _normalize_trend_param(value: Any, default_value: str = "n") -> str:
+    """Normalize statsmodels trend option."""
+    token = str(value or default_value).strip().lower()
+    if token in {"n", "c", "t", "ct"}:
+        return token
+    return default_value
+
+
+def _normalize_order_sequence(
+    value: Any,
+    default_value: tuple[int, ...],
+    *,
+    length: int,
+    field_name: str,
+) -> tuple[int, ...]:
+    """Normalize ARIMA-style order input into a fixed-length integer tuple."""
+    if value is None:
+        return tuple(int(v) for v in default_value)
+    if isinstance(value, str):
+        token = value.strip()
+        if token.startswith(("[", "(")) and token.endswith(("]", ")")):
+            token = token[1:-1]
+        raw_values: list[Any] = [part.strip() for part in token.split(",") if part.strip()]
+    elif isinstance(value, (list, tuple, np.ndarray)):
+        raw_values = list(value)
+    else:
+        raise ValueError(f"{field_name} は長さ {length} の整数列で指定してください。")
+
+    if len(raw_values) != length:
+        raise ValueError(f"{field_name} は長さ {length} の整数列で指定してください。")
+
+    normalized: list[int] = []
+    for item in raw_values:
+        try:
+            normalized.append(int(item))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} に整数以外が含まれています。") from exc
+    return tuple(normalized)
+
+
+def _normalize_arima_order(
+    value: Any,
+    default_value: tuple[int, int, int] = (1, 1, 1),
+) -> tuple[int, int, int]:
+    """Normalize ARIMA order."""
+    return tuple(_normalize_order_sequence(value, default_value, length=3, field_name="order"))  # type: ignore[return-value]
+
+
+def _normalize_sarima_order(
+    value: Any,
+    default_value: tuple[int, int, int, int] = (1, 0, 1, 12),
+) -> tuple[int, int, int, int]:
+    """Normalize SARIMA seasonal order."""
+    return tuple(_normalize_order_sequence(value, default_value, length=4, field_name="seasonal_order"))  # type: ignore[return-value]
+
+
+def _safe_r2_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Return R2 or NaN when it cannot be computed."""
+    from sklearn.metrics import r2_score
+
+    if len(y_true) < 2:
+        return float("nan")
+    try:
+        return float(r2_score(y_true, y_pred))
+    except Exception:
+        return float("nan")
+
+
+def _prepare_time_series_dataset(
+    df: pd.DataFrame,
+    *,
+    target_col: str | None,
+    split_method: str,
+    train_ratio: float,
+    random_seed: int,
+    split_order_col: str | None,
+) -> dict[str, Any]:
+    """Prepare sequential train/test split for time-series models."""
+    if not target_col or target_col not in df.columns:
+        raise ValueError("目的変数を選択してください。")
+
+    row_ids = (
+        df[ID_COLUMN].astype(str)
+        if ID_COLUMN in df.columns
+        else pd.Series(df.index.astype(str), index=df.index)
+    )
+    axis_series = (
+        df[split_order_col].copy()
+        if split_order_col and split_order_col in df.columns
+        else pd.Series(df.index, index=df.index)
+    )
+    working = pd.DataFrame(
+        {
+            "__target__": pd.to_numeric(df[target_col], errors="coerce"),
+            "__axis__": axis_series,
+            "__sample_id__": row_ids,
+        },
+        index=df.index,
+    )
+    working = working.dropna(subset=["__target__"])
+    if len(working) < 6:
+        raise ValueError("時系列モデルには欠損除外後で 6 行以上の時系列データが必要です。")
+
+    split_warnings: list[str] = []
+    safe_method = normalize_split_method(split_method)
+    if safe_method != "sequential":
+        split_warnings.append("時系列モデルでは分割方法を前後分割として扱います。")
+
+    if split_order_col and split_order_col in df.columns:
+        try:
+            working = working.sort_values("__axis__", kind="mergesort")
+        except Exception:
+            split_warnings.append(f"前後分割の順序列 '{split_order_col}' を並べ替えに使えないため、現在順序を使用します。")
+    elif split_order_col:
+        split_warnings.append(f"前後分割の順序列 '{split_order_col}' が見つからないため、現在順序を使用します。")
+
+    safe_ratio = normalize_train_ratio(train_ratio)
+    safe_seed = normalize_random_seed(random_seed)
+    n_rows = len(working)
+    min_train = 4 if n_rows >= 5 else max(2, n_rows - 1)
+    train_size = int(round(n_rows * safe_ratio))
+    train_size = min(max(train_size, min_train), n_rows - 1)
+
+    train_frame = working.iloc[:train_size].copy()
+    test_frame = working.iloc[train_size:].copy()
+    if test_frame.empty:
+        raise ValueError("テスト区間が 1 行以上になるように学習比率を調整してください。")
+
+    return {
+        "target_col": target_col,
+        "series_train": pd.Series(train_frame["__target__"].to_numpy(dtype=float), dtype=float),
+        "series_test": pd.Series(test_frame["__target__"].to_numpy(dtype=float), dtype=float),
+        "series_all": pd.Series(working["__target__"].to_numpy(dtype=float), dtype=float),
+        "train_axis": pd.Index(train_frame["__axis__"].tolist()),
+        "test_axis": pd.Index(test_frame["__axis__"].tolist()),
+        "all_axis": pd.Index(working["__axis__"].tolist()),
+        "train_idx": pd.Index(train_frame.index),
+        "test_idx": pd.Index(test_frame.index),
+        "train_sample_ids": pd.Index(train_frame["__sample_id__"].astype(str).tolist()),
+        "test_sample_ids": pd.Index(test_frame["__sample_id__"].astype(str).tolist()),
+        "split_warnings": split_warnings,
+        "split_method": "sequential",
+        "train_ratio": safe_ratio,
+        "random_seed": safe_seed,
+        "order_col": split_order_col if split_order_col in df.columns else None,
+    }
+
+
+def _iter_candidate_dicts(grid: dict[str, list[Any]] | None) -> list[dict[str, Any]]:
+    """Expand discrete hyperparameter grid into candidate dictionaries."""
+    if not grid:
+        return [{}]
+    normalized: dict[str, list[Any]] = {}
+    for key, values in grid.items():
+        normalized[str(key)] = list(values or [])
+    if not normalized or any(len(values) == 0 for values in normalized.values()):
+        return [{}]
+    keys = list(normalized.keys())
+    return [dict(zip(keys, combo)) for combo in product(*(normalized[key] for key in keys))]
+
+
+def _fit_time_series_candidate(
+    model_key: str,
+    y_train: pd.Series,
+    params: dict[str, Any],
+) -> tuple[Any, dict[str, Any]]:
+    """Fit one time-series candidate model on train data."""
+    try:
+        from statsmodels.tsa.arima.model import ARIMA
+        from statsmodels.tsa.statespace.sarimax import SARIMAX
+    except ImportError as exc:
+        raise ValueError("時系列モデルには `statsmodels` が必要です。`pip install statsmodels` を実行してください。") from exc
+
+    if model_key == "ts_arima":
+        order = _normalize_arima_order(params.get("order"), (1, 1, 1))
+        trend = _normalize_trend_param(params.get("trend"), "n")
+        model = ARIMA(y_train.astype(float), order=order, trend=trend)
+        fit_result = model.fit()
+        return fit_result, {"order": list(order), "trend": trend}
+
+    order = _normalize_arima_order(params.get("order"), (1, 1, 1))
+    seasonal_order = _normalize_sarima_order(params.get("seasonal_order"), (1, 0, 1, 12))
+    trend = _normalize_trend_param(params.get("trend"), "n")
+    model = SARIMAX(
+        y_train.astype(float),
+        order=order,
+        seasonal_order=seasonal_order,
+        trend=trend,
+        enforce_stationarity=False,
+        enforce_invertibility=False,
+    )
+    fit_result = model.fit(disp=False)
+    return fit_result, {"order": list(order), "seasonal_order": list(seasonal_order), "trend": trend}
+
+
+def _compute_ewma_stats(
+    values: np.ndarray,
+    *,
+    baseline_mean: float,
+    baseline_std: float,
+    alpha: float,
+    limit_sigma: float,
+) -> dict[str, np.ndarray]:
+    """Compute EWMA statistics and control limits."""
+    n = len(values)
+    ewma = np.zeros(n, dtype=float)
+    prev = float(baseline_mean)
+    for idx, value in enumerate(values):
+        prev = alpha * float(value) + (1.0 - alpha) * prev
+        ewma[idx] = prev
+
+    positions = np.arange(1, n + 1, dtype=float)
+    sigma_scale = np.sqrt((alpha / (2.0 - alpha)) * (1.0 - ((1.0 - alpha) ** (2.0 * positions))))
+    ucl = baseline_mean + limit_sigma * baseline_std * sigma_scale
+    lcl = baseline_mean - limit_sigma * baseline_std * sigma_scale
+    signal_mask = (ewma > ucl) | (ewma < lcl)
+    return {
+        "ewma": ewma,
+        "ucl": np.asarray(ucl, dtype=float),
+        "lcl": np.asarray(lcl, dtype=float),
+        "signal_mask": np.asarray(signal_mask, dtype=bool),
+    }
+
+
+def _compute_cusum_stats(
+    values: np.ndarray,
+    *,
+    baseline_mean: float,
+    baseline_std: float,
+    k: float,
+    h: float,
+) -> dict[str, np.ndarray]:
+    """Compute one-sided CUSUM statistics."""
+    z = (np.asarray(values, dtype=float) - baseline_mean) / baseline_std
+    c_plus = np.zeros(len(z), dtype=float)
+    c_minus = np.zeros(len(z), dtype=float)
+    for idx, value in enumerate(z):
+        prev_plus = c_plus[idx - 1] if idx > 0 else 0.0
+        prev_minus = c_minus[idx - 1] if idx > 0 else 0.0
+        c_plus[idx] = max(0.0, prev_plus + float(value) - k)
+        c_minus[idx] = min(0.0, prev_minus + float(value) + k)
+    pos_signal = c_plus > h
+    neg_signal = c_minus < -h
+    return {
+        "z": z,
+        "c_plus": c_plus,
+        "c_minus": c_minus,
+        "pos_signal": np.asarray(pos_signal, dtype=bool),
+        "neg_signal": np.asarray(neg_signal, dtype=bool),
+    }
+
+
+def _suggest_time_series_params(
+    model_key: str,
+    prepared: dict[str, Any],
+    *,
+    candidate_grid: dict[str, list[Any]] | None,
+    params: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Suggest time-series hyperparameters from train series."""
+    base_params = default_hyperparams(model_key)
+    base_params.update(params or {})
+    train_series = pd.Series(prepared["series_train"], dtype=float)
+
+    if model_key in {"ts_arima", "ts_sarima"}:
+        candidates = _iter_candidate_dicts(candidate_grid)
+        if not candidates:
+            candidates = [{}]
+        best_params = dict(base_params)
+        best_aic = float("inf")
+        success_count = 0
+        errors: list[str] = []
+        for candidate in candidates:
+            trial_params = dict(base_params)
+            trial_params.update(candidate)
+            try:
+                fit_result, normalized_params = _fit_time_series_candidate(model_key, train_series, trial_params)
+            except Exception as exc:
+                errors.append(str(exc))
+                continue
+            aic = float(getattr(fit_result, "aic", np.nan))
+            if not np.isfinite(aic):
+                errors.append("AIC を計算できませんでした。")
+                continue
+            success_count += 1
+            if aic < best_aic:
+                best_aic = aic
+                best_params = dict(base_params)
+                best_params.update(normalized_params)
+        if success_count == 0:
+            summary = "学習データで AIC を計算できる候補が無かったため、既定値を提案します。"
+            if errors:
+                summary += f" 例: {errors[0]}"
+            return base_params, summary
+        return best_params, f"学習データの AIC 最小候補を提案します (AIC={best_aic:.6g}, 成功 {success_count}/{len(candidates)} 候補)。"
+
+    if model_key == "ts_ewma":
+        candidates = _iter_candidate_dicts(candidate_grid)
+        target_signal_ratio = 0.01
+        values = train_series.to_numpy(dtype=float)
+        baseline_mean = float(np.mean(values))
+        baseline_std = float(np.std(values, ddof=0))
+        baseline_std = baseline_std if baseline_std > 0 else 1.0
+        best_params = dict(base_params)
+        best_score = float("inf")
+        best_ratio = float("nan")
+        for candidate in candidates:
+            trial = dict(base_params)
+            trial.update(candidate)
+            alpha = _normalize_fraction_param(trial.get("alpha"), 0.2, min_value=0.01, max_value=0.95)
+            limit_sigma = _normalize_positive_param(trial.get("limit_sigma"), 3.0, min_value=0.1)
+            stats = _compute_ewma_stats(values, baseline_mean=baseline_mean, baseline_std=baseline_std, alpha=alpha, limit_sigma=limit_sigma)
+            ratio = float(np.mean(stats["signal_mask"])) if len(values) else float("nan")
+            score = abs(ratio - target_signal_ratio)
+            if score < best_score:
+                best_score = score
+                best_ratio = ratio
+                best_params = {"alpha": alpha, "limit_sigma": limit_sigma}
+        return best_params, f"学習データの信号率が 1% に近い EWMA 候補を提案します (signal_ratio={best_ratio:.4f})。"
+
+    candidates = _iter_candidate_dicts(candidate_grid)
+    target_signal_ratio = 0.01
+    values = train_series.to_numpy(dtype=float)
+    baseline_mean = float(np.mean(values))
+    baseline_std = float(np.std(values, ddof=0))
+    baseline_std = baseline_std if baseline_std > 0 else 1.0
+    best_params = dict(base_params)
+    best_score = float("inf")
+    best_ratio = float("nan")
+    for candidate in candidates:
+        trial = dict(base_params)
+        trial.update(candidate)
+        k_value = _normalize_positive_param(trial.get("k"), 0.5, min_value=0.05)
+        h_value = _normalize_positive_param(trial.get("h"), 5.0, min_value=0.5)
+        stats = _compute_cusum_stats(values, baseline_mean=baseline_mean, baseline_std=baseline_std, k=k_value, h=h_value)
+        ratio = float(np.mean(stats["pos_signal"] | stats["neg_signal"])) if len(values) else float("nan")
+        score = abs(ratio - target_signal_ratio)
+        if score < best_score:
+            best_score = score
+            best_ratio = ratio
+            best_params = {"k": k_value, "h": h_value}
+    return best_params, f"学習データの信号率が 1% に近い CUSUM 候補を提案します (signal_ratio={best_ratio:.4f})。"
 
 
 def _build_feature_preprocessor(x_train: pd.DataFrame) -> Any:
@@ -1728,6 +2158,347 @@ def _transformed_feature_sources(preprocessor: Any) -> list[str]:
     if len(sources) != len(transformed_names):
         return transformed_names
     return sources
+
+
+def _build_time_series_raw_figure(
+    *,
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+    train_axis: pd.Index,
+    test_axis: pd.Index,
+    target_col: str,
+    title: str,
+) -> go.Figure:
+    """Build raw time-series figure for train/test segments."""
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=[str(value) for value in train_axis],
+            y=y_train,
+            mode="lines+markers",
+            name="学習 実測",
+            line={"color": "#4C78A8"},
+            marker={"size": 5},
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[str(value) for value in test_axis],
+            y=y_test,
+            mode="lines+markers",
+            name="テスト 実測",
+            line={"color": "#F58518"},
+            marker={"size": 5},
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="時系列順",
+        yaxis_title=target_col,
+        margin={"l": 44, "r": 24, "t": 52, "b": 72},
+        legend={"orientation": "h"},
+    )
+    return fig
+
+
+def _build_ewma_figure(
+    *,
+    axis_values: pd.Index,
+    ewma: np.ndarray,
+    raw_values: np.ndarray,
+    center: float,
+    ucl: np.ndarray,
+    lcl: np.ndarray,
+    signal_mask: np.ndarray,
+    train_size: int,
+    target_col: str,
+) -> go.Figure:
+    """Build EWMA monitoring figure."""
+    x_values = [str(value) for value in axis_values]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x_values, y=raw_values, mode="lines", name="実測", line={"color": "#bcbcbc"}))
+    fig.add_trace(go.Scatter(x=x_values, y=ewma, mode="lines+markers", name="EWMA", line={"color": "#111111"}, marker={"size": 5}))
+    fig.add_trace(go.Scatter(x=x_values, y=np.repeat(center, len(x_values)), mode="lines", name="中心線", line={"color": "#4C78A8", "dash": "dot"}))
+    fig.add_trace(go.Scatter(x=x_values, y=ucl, mode="lines", name="UCL", line={"color": "#e45756", "dash": "dash"}))
+    fig.add_trace(go.Scatter(x=x_values, y=lcl, mode="lines", name="LCL", line={"color": "#e45756", "dash": "dash"}))
+    if signal_mask.any():
+        signal_x = [x_values[idx] for idx, flag in enumerate(signal_mask) if flag]
+        signal_y = [float(ewma[idx]) for idx, flag in enumerate(signal_mask) if flag]
+        fig.add_trace(
+            go.Scatter(
+                x=signal_x,
+                y=signal_y,
+                mode="markers",
+                name="信号",
+                marker={"color": "#e45756", "size": 8, "symbol": "x"},
+            )
+        )
+    if 0 < train_size < len(x_values):
+        fig.add_vline(x=max(train_size - 0.5, 0), line_width=1, line_dash="dot", line_color="#7f7f7f")
+    fig.update_layout(
+        title=f"EWMA 管理図: {target_col}",
+        xaxis_title="時系列順",
+        yaxis_title="EWMA",
+        margin={"l": 44, "r": 24, "t": 52, "b": 72},
+        legend={"orientation": "h"},
+    )
+    return fig
+
+
+def _build_cusum_figure(
+    *,
+    axis_values: pd.Index,
+    c_plus: np.ndarray,
+    c_minus: np.ndarray,
+    h_value: float,
+    pos_signal: np.ndarray,
+    neg_signal: np.ndarray,
+    train_size: int,
+    target_col: str,
+) -> go.Figure:
+    """Build CUSUM monitoring figure."""
+    x_values = [str(value) for value in axis_values]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x_values, y=c_plus, mode="lines+markers", name="C+", line={"color": "#4C78A8"}, marker={"size": 5}))
+    fig.add_trace(go.Scatter(x=x_values, y=c_minus, mode="lines+markers", name="C-", line={"color": "#F58518"}, marker={"size": 5}))
+    fig.add_trace(go.Scatter(x=x_values, y=np.repeat(h_value, len(x_values)), mode="lines", name="+h", line={"color": "#e45756", "dash": "dash"}))
+    fig.add_trace(go.Scatter(x=x_values, y=np.repeat(-h_value, len(x_values)), mode="lines", name="-h", line={"color": "#e45756", "dash": "dash"}))
+    if pos_signal.any():
+        fig.add_trace(
+            go.Scatter(
+                x=[x_values[idx] for idx, flag in enumerate(pos_signal) if flag],
+                y=[float(c_plus[idx]) for idx, flag in enumerate(pos_signal) if flag],
+                mode="markers",
+                name="正側信号",
+                marker={"color": "#e45756", "size": 8, "symbol": "triangle-up"},
+            )
+        )
+    if neg_signal.any():
+        fig.add_trace(
+            go.Scatter(
+                x=[x_values[idx] for idx, flag in enumerate(neg_signal) if flag],
+                y=[float(c_minus[idx]) for idx, flag in enumerate(neg_signal) if flag],
+                mode="markers",
+                name="負側信号",
+                marker={"color": "#72b7b2", "size": 8, "symbol": "triangle-down"},
+            )
+        )
+    if 0 < train_size < len(x_values):
+        fig.add_vline(x=max(train_size - 0.5, 0), line_width=1, line_dash="dot", line_color="#7f7f7f")
+    fig.update_layout(
+        title=f"CUSUM 管理図: {target_col}",
+        xaxis_title="時系列順",
+        yaxis_title="CUSUM",
+        margin={"l": 44, "r": 24, "t": 52, "b": 72},
+        legend={"orientation": "h"},
+    )
+    return fig
+
+
+def _run_time_series_model(
+    model_key: str,
+    prepared: dict[str, Any],
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Train/evaluate time-series model and create figures."""
+    target_col = str(prepared["target_col"])
+    y_train = np.asarray(prepared["series_train"], dtype=float)
+    y_test = np.asarray(prepared["series_test"], dtype=float)
+    train_axis = pd.Index(prepared["train_axis"])
+    test_axis = pd.Index(prepared["test_axis"])
+    all_axis = pd.Index(prepared["all_axis"])
+    all_values = np.concatenate([y_train, y_test])
+    notes: list[str] = list(prepared.get("split_warnings", []))
+
+    if model_key in {"ts_arima", "ts_sarima"}:
+        fit_result, normalized_params = _fit_time_series_candidate(model_key, pd.Series(y_train, dtype=float), params)
+        pred_train = np.asarray(fit_result.predict(start=0, end=len(y_train) - 1), dtype=float)
+        pred_test = np.asarray(fit_result.forecast(steps=len(y_test)), dtype=float)
+        metrics = pd.DataFrame(
+            [
+                {
+                    "dataset": "train",
+                    "R2": _safe_r2_score(y_train, pred_train),
+                    "RMSE": float(np.sqrt(np.mean((y_train - pred_train) ** 2))),
+                    "MAE": float(np.mean(np.abs(y_train - pred_train))),
+                    "AIC": float(getattr(fit_result, "aic", np.nan)),
+                    "BIC": float(getattr(fit_result, "bic", np.nan)),
+                },
+                {
+                    "dataset": "test",
+                    "R2": _safe_r2_score(y_test, pred_test),
+                    "RMSE": float(np.sqrt(np.mean((y_test - pred_test) ** 2))),
+                    "MAE": float(np.mean(np.abs(y_test - pred_test))),
+                    "AIC": float(getattr(fit_result, "aic", np.nan)),
+                    "BIC": float(getattr(fit_result, "bic", np.nan)),
+                },
+            ]
+        )
+        notes.append("時系列予測モデルは学習区間で当てはめ、テスト区間は未来予測として評価しています。")
+        figures = [
+            _build_regression_overlay_figure(
+                y_train=y_train,
+                y_test=y_test,
+                pred_train=pred_train,
+                pred_test=pred_test,
+                train_idx=train_axis,
+                test_idx=test_axis,
+                target_col=target_col,
+            ),
+            _build_regression_yy_figure(
+                y_train=y_train,
+                y_test=y_test,
+                pred_train=pred_train,
+                pred_test=pred_test,
+                target_col=target_col,
+            ),
+        ]
+        used_params = dict(params)
+        used_params.update(normalized_params)
+        trained_model: Any = fit_result
+    elif model_key == "ts_ewma":
+        alpha = _normalize_fraction_param(params.get("alpha"), 0.2, min_value=0.01, max_value=0.95)
+        limit_sigma = _normalize_positive_param(params.get("limit_sigma"), 3.0, min_value=0.1)
+        baseline_mean = float(np.mean(y_train))
+        baseline_std = float(np.std(y_train, ddof=0))
+        baseline_std = baseline_std if baseline_std > 0 else 1.0
+        ewma_stats = _compute_ewma_stats(all_values, baseline_mean=baseline_mean, baseline_std=baseline_std, alpha=alpha, limit_sigma=limit_sigma)
+        signal_mask = np.asarray(ewma_stats["signal_mask"], dtype=bool)
+        train_signal = signal_mask[: len(y_train)]
+        test_signal = signal_mask[len(y_train) :]
+        metrics = pd.DataFrame(
+            [
+                {
+                    "dataset": "train",
+                    "mean": baseline_mean,
+                    "std": baseline_std,
+                    "signal_count": int(train_signal.sum()),
+                    "signal_ratio": float(np.mean(train_signal)) if len(train_signal) else float("nan"),
+                    "alpha": alpha,
+                    "limit_sigma": limit_sigma,
+                },
+                {
+                    "dataset": "test",
+                    "mean": float(np.mean(y_test)),
+                    "std": float(np.std(y_test, ddof=0)),
+                    "signal_count": int(test_signal.sum()),
+                    "signal_ratio": float(np.mean(test_signal)) if len(test_signal) else float("nan"),
+                    "alpha": alpha,
+                    "limit_sigma": limit_sigma,
+                },
+            ]
+        )
+        notes.append("EWMA は学習区間の平均・標準偏差を基準に全区間の管理限界を計算しています。")
+        figures = [
+            _build_time_series_raw_figure(
+                y_train=y_train,
+                y_test=y_test,
+                train_axis=train_axis,
+                test_axis=test_axis,
+                target_col=target_col,
+                title=f"時系列実測値: {target_col}",
+            ),
+            _build_ewma_figure(
+                axis_values=all_axis,
+                ewma=np.asarray(ewma_stats["ewma"], dtype=float),
+                raw_values=all_values,
+                center=baseline_mean,
+                ucl=np.asarray(ewma_stats["ucl"], dtype=float),
+                lcl=np.asarray(ewma_stats["lcl"], dtype=float),
+                signal_mask=signal_mask,
+                train_size=len(y_train),
+                target_col=target_col,
+            ),
+        ]
+        used_params = {"alpha": alpha, "limit_sigma": limit_sigma}
+        trained_model = {"baseline_mean": baseline_mean, "baseline_std": baseline_std, **used_params}
+    else:
+        k_value = _normalize_positive_param(params.get("k"), 0.5, min_value=0.05)
+        h_value = _normalize_positive_param(params.get("h"), 5.0, min_value=0.5)
+        baseline_mean = float(np.mean(y_train))
+        baseline_std = float(np.std(y_train, ddof=0))
+        baseline_std = baseline_std if baseline_std > 0 else 1.0
+        cusum_stats = _compute_cusum_stats(all_values, baseline_mean=baseline_mean, baseline_std=baseline_std, k=k_value, h=h_value)
+        pos_signal = np.asarray(cusum_stats["pos_signal"], dtype=bool)
+        neg_signal = np.asarray(cusum_stats["neg_signal"], dtype=bool)
+        total_signal = pos_signal | neg_signal
+        train_signal = total_signal[: len(y_train)]
+        test_signal = total_signal[len(y_train) :]
+        metrics = pd.DataFrame(
+            [
+                {
+                    "dataset": "train",
+                    "mean": baseline_mean,
+                    "std": baseline_std,
+                    "positive_signal_count": int(pos_signal[: len(y_train)].sum()),
+                    "negative_signal_count": int(neg_signal[: len(y_train)].sum()),
+                    "signal_ratio": float(np.mean(train_signal)) if len(train_signal) else float("nan"),
+                    "k": k_value,
+                    "h": h_value,
+                },
+                {
+                    "dataset": "test",
+                    "mean": float(np.mean(y_test)),
+                    "std": float(np.std(y_test, ddof=0)),
+                    "positive_signal_count": int(pos_signal[len(y_train) :].sum()),
+                    "negative_signal_count": int(neg_signal[len(y_train) :].sum()),
+                    "signal_ratio": float(np.mean(test_signal)) if len(test_signal) else float("nan"),
+                    "k": k_value,
+                    "h": h_value,
+                },
+            ]
+        )
+        notes.append("CUSUM は学習区間の平均・標準偏差を基準に全区間の累積和を計算しています。")
+        figures = [
+            _build_time_series_raw_figure(
+                y_train=y_train,
+                y_test=y_test,
+                train_axis=train_axis,
+                test_axis=test_axis,
+                target_col=target_col,
+                title=f"時系列実測値: {target_col}",
+            ),
+            _build_cusum_figure(
+                axis_values=all_axis,
+                c_plus=np.asarray(cusum_stats["c_plus"], dtype=float),
+                c_minus=np.asarray(cusum_stats["c_minus"], dtype=float),
+                h_value=h_value,
+                pos_signal=pos_signal,
+                neg_signal=neg_signal,
+                train_size=len(y_train),
+                target_col=target_col,
+            ),
+        ]
+        used_params = {"k": k_value, "h": h_value}
+        trained_model = {"baseline_mean": baseline_mean, "baseline_std": baseline_std, **used_params}
+
+    return {
+        "task": "timeseries",
+        "model_key": model_key,
+        "model_label": model_label(model_key),
+        "used_params": used_params,
+        "metrics": metrics,
+        "figures": figures,
+        "notes": notes,
+        "importance_tables": [],
+        "importance_figures": [],
+        "extra_text_blocks": [],
+        "artifact_bundle": {
+            "meta": {
+                "model_key": model_key,
+                "model_label": model_label(model_key),
+                "task": "timeseries",
+                "target_col": target_col,
+                "feature_count": 0,
+            },
+            "trained_model": trained_model,
+            "prepared_info": {
+                "target_col": target_col,
+                "order_col": prepared.get("order_col"),
+                "params": used_params,
+            },
+        },
+    }
 
 
 def _aggregate_contribution_frame(contrib_values: np.ndarray, feature_sources: list[str]) -> pd.DataFrame:

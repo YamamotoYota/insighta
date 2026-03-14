@@ -558,6 +558,42 @@ def create_layout(
                     ),
                     html.Div(
                         [
+                            html.Label("単純移動平均 (1行に1設定: 例 `temp: 5` または `temp: window=5, center=true`)"),
+                            dcc.Textarea(
+                                id="sma-config-text",
+                                value="",
+                                style={"width": "100%", "height": "90px"},
+                                placeholder="temp: 5\npressure: window=7, min_periods=1, center=false",
+                            ),
+                        ],
+                        style={"marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("指数移動平均 (1行に1設定: 例 `temp: 10` または `temp: span=10, adjust=false`)"),
+                            dcc.Textarea(
+                                id="ema-config-text",
+                                value="",
+                                style={"width": "100%", "height": "90px"},
+                                placeholder="temp: 10\npressure: span=12, min_periods=1, adjust=false",
+                            ),
+                        ],
+                        style={"marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Label("季節分解 (STL分解, 1行に1設定: 例 `temp: 24` または `temp: period=24, seasonal=13, robust=true`)"),
+                            dcc.Textarea(
+                                id="stl-config-text",
+                                value="",
+                                style={"width": "100%", "height": "100px"},
+                                placeholder="temp: 24\nvibration: period=24, seasonal=13, trend=25, robust=true",
+                            ),
+                        ],
+                        style={"marginTop": "8px"},
+                    ),
+                    html.Div(
+                        [
                             html.Div(
                                 [
                                     html.Label("学習/テスト分割方法"),

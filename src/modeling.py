@@ -127,6 +127,221 @@ def parse_feature_config_text(text: str | None) -> tuple[list[dict[str, str]], l
     return features, warnings
 
 
+def _parse_bool_token(value: str, *, default: bool, line_no: int, label: str, warnings: list[str]) -> bool:
+    token = str(value).strip().lower()
+    if token in {"true", "1", "yes", "y", "on"}:
+        return True
+    if token in {"false", "0", "no", "n", "off"}:
+        return False
+    warnings.append(f"{label} {line_no}行目: 真偽値 '{value}' を解釈できないため既定値 {default} を使います。")
+    return default
+
+
+def _parse_positive_int_token(
+    value: str,
+    *,
+    default: int,
+    line_no: int,
+    label: str,
+    field_name: str,
+    warnings: list[str],
+    minimum: int = 1,
+) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        warnings.append(f"{label} {line_no}行目: {field_name}='{value}' は整数ではありません。既定値 {default} を使います。")
+        return default
+    if parsed < minimum:
+        warnings.append(f"{label} {line_no}行目: {field_name} は {minimum} 以上が必要です。既定値 {default} を使います。")
+        return default
+    return parsed
+
+
+def parse_sma_config_text(text: str | None, valid_columns: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse simple moving-average configuration text.
+
+    Examples:
+        temp: 5
+        pressure: window=7, min_periods=1, center=true
+    """
+    if not text:
+        return [], []
+
+    valid_set = set(valid_columns)
+    configs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if ":" not in raw:
+            warnings.append(f"単純移動平均設定 {line_no}行目: ':' 区切りがありません。")
+            continue
+        col_part, opts_part = raw.split(":", 1)
+        col = col_part.strip()
+        if col not in valid_set:
+            warnings.append(f"単純移動平均設定 {line_no}行目: 列 '{col}' が存在しません。")
+            continue
+
+        config: dict[str, Any] = {"column": col, "window": 3, "min_periods": 1, "center": False}
+        tokens = [token.strip() for token in opts_part.split(",") if token.strip()]
+        if not tokens:
+            warnings.append(f"単純移動平均設定 {line_no}行目: window が未指定です。")
+            continue
+        for token in tokens:
+            if "=" not in token:
+                config["window"] = _parse_positive_int_token(
+                    token,
+                    default=int(config["window"]),
+                    line_no=line_no,
+                    label="単純移動平均設定",
+                    field_name="window",
+                    warnings=warnings,
+                )
+                continue
+            key, value = [part.strip() for part in token.split("=", 1)]
+            if key == "window":
+                config["window"] = _parse_positive_int_token(value, default=3, line_no=line_no, label="単純移動平均設定", field_name="window", warnings=warnings)
+            elif key == "min_periods":
+                config["min_periods"] = _parse_positive_int_token(value, default=1, line_no=line_no, label="単純移動平均設定", field_name="min_periods", warnings=warnings)
+            elif key == "center":
+                config["center"] = _parse_bool_token(value, default=False, line_no=line_no, label="単純移動平均設定", warnings=warnings)
+            else:
+                warnings.append(f"単純移動平均設定 {line_no}行目: 未対応オプション '{key}' は無視されます。")
+        configs.append(config)
+    return configs, warnings
+
+
+def parse_ema_config_text(text: str | None, valid_columns: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse exponential moving-average configuration text.
+
+    Examples:
+        temp: 10
+        pressure: span=12, min_periods=1, adjust=false
+    """
+    if not text:
+        return [], []
+
+    valid_set = set(valid_columns)
+    configs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if ":" not in raw:
+            warnings.append(f"指数移動平均設定 {line_no}行目: ':' 区切りがありません。")
+            continue
+        col_part, opts_part = raw.split(":", 1)
+        col = col_part.strip()
+        if col not in valid_set:
+            warnings.append(f"指数移動平均設定 {line_no}行目: 列 '{col}' が存在しません。")
+            continue
+
+        config: dict[str, Any] = {"column": col, "span": 5, "min_periods": 1, "adjust": False}
+        tokens = [token.strip() for token in opts_part.split(",") if token.strip()]
+        if not tokens:
+            warnings.append(f"指数移動平均設定 {line_no}行目: span が未指定です。")
+            continue
+        for token in tokens:
+            if "=" not in token:
+                config["span"] = _parse_positive_int_token(
+                    token,
+                    default=int(config["span"]),
+                    line_no=line_no,
+                    label="指数移動平均設定",
+                    field_name="span",
+                    warnings=warnings,
+                )
+                continue
+            key, value = [part.strip() for part in token.split("=", 1)]
+            if key == "span":
+                config["span"] = _parse_positive_int_token(value, default=5, line_no=line_no, label="指数移動平均設定", field_name="span", warnings=warnings)
+            elif key == "min_periods":
+                config["min_periods"] = _parse_positive_int_token(value, default=1, line_no=line_no, label="指数移動平均設定", field_name="min_periods", warnings=warnings)
+            elif key == "adjust":
+                config["adjust"] = _parse_bool_token(value, default=False, line_no=line_no, label="指数移動平均設定", warnings=warnings)
+            else:
+                warnings.append(f"指数移動平均設定 {line_no}行目: 未対応オプション '{key}' は無視されます。")
+        configs.append(config)
+    return configs, warnings
+
+
+def parse_stl_config_text(text: str | None, valid_columns: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse STL decomposition configuration text.
+
+    Examples:
+        temp: 24
+        vibration: period=24, seasonal=13, trend=25, robust=true
+    """
+    if not text:
+        return [], []
+
+    valid_set = set(valid_columns)
+    configs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if ":" not in raw:
+            warnings.append(f"STL分解設定 {line_no}行目: ':' 区切りがありません。")
+            continue
+        col_part, opts_part = raw.split(":", 1)
+        col = col_part.strip()
+        if col not in valid_set:
+            warnings.append(f"STL分解設定 {line_no}行目: 列 '{col}' が存在しません。")
+            continue
+
+        config: dict[str, Any] = {
+            "column": col,
+            "period": 12,
+            "seasonal": None,
+            "trend": None,
+            "low_pass": None,
+            "robust": False,
+        }
+        tokens = [token.strip() for token in opts_part.split(",") if token.strip()]
+        if not tokens:
+            warnings.append(f"STL分解設定 {line_no}行目: period が未指定です。")
+            continue
+        for token in tokens:
+            if "=" not in token:
+                config["period"] = _parse_positive_int_token(
+                    token,
+                    default=int(config["period"]),
+                    line_no=line_no,
+                    label="STL分解設定",
+                    field_name="period",
+                    warnings=warnings,
+                    minimum=2,
+                )
+                continue
+            key, value = [part.strip() for part in token.split("=", 1)]
+            if key == "period":
+                config["period"] = _parse_positive_int_token(value, default=12, line_no=line_no, label="STL分解設定", field_name="period", warnings=warnings, minimum=2)
+            elif key == "seasonal":
+                config["seasonal"] = _parse_positive_int_token(value, default=7, line_no=line_no, label="STL分解設定", field_name="seasonal", warnings=warnings, minimum=3)
+            elif key == "trend":
+                config["trend"] = _parse_positive_int_token(value, default=13, line_no=line_no, label="STL分解設定", field_name="trend", warnings=warnings, minimum=3)
+            elif key == "low_pass":
+                config["low_pass"] = _parse_positive_int_token(value, default=13, line_no=line_no, label="STL分解設定", field_name="low_pass", warnings=warnings, minimum=3)
+            elif key == "robust":
+                config["robust"] = _parse_bool_token(value, default=False, line_no=line_no, label="STL分解設定", warnings=warnings)
+            else:
+                warnings.append(f"STL分解設定 {line_no}行目: 未対応オプション '{key}' は無視されます。")
+        configs.append(config)
+    return configs, warnings
+
+
+def _resolve_ordered_index(df: pd.DataFrame, order_col: str | None) -> pd.Index:
+    """Resolve stable ordered index for time-series style transformations."""
+    if order_col and order_col in df.columns:
+        return df.sort_values(order_col, kind="mergesort").index
+    return df.index
+
+
 def apply_lag_features(
     df: pd.DataFrame,
     lag_configs: list[dict[str, Any]],
@@ -137,11 +352,7 @@ def apply_lag_features(
     if not lag_configs:
         return df.copy(), []
 
-    if order_col and order_col in df.columns:
-        ordered_index = df.sort_values(order_col, kind="mergesort").index
-    else:
-        ordered_index = df.index
-
+    ordered_index = _resolve_ordered_index(df, order_col)
     ordered = df.loc[ordered_index].copy()
     added_cols: list[str] = []
     for config in lag_configs:
@@ -213,6 +424,136 @@ def apply_feature_expressions(
         added_cols.append(out_col)
 
     return working, added_cols, warnings
+
+
+def apply_simple_moving_average_features(
+    df: pd.DataFrame,
+    configs: list[dict[str, Any]],
+    *,
+    order_col: str | None = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Add simple moving average columns."""
+    if not configs:
+        return df.copy(), [], []
+
+    ordered_index = _resolve_ordered_index(df, order_col)
+    ordered = df.loc[ordered_index].copy()
+    added_cols: list[str] = []
+    warnings: list[str] = []
+    for config in configs:
+        col = str(config.get("column"))
+        if col not in ordered.columns:
+            continue
+        window = int(config.get("window", 3))
+        min_periods = int(config.get("min_periods", 1))
+        center = bool(config.get("center", False))
+        series = pd.to_numeric(ordered[col], errors="coerce")
+        if series.notna().sum() == 0:
+            warnings.append(f"単純移動平均: 列 '{col}' は数値化できないためスキップしました。")
+            continue
+        new_col = f"{col}_sma{window}"
+        ordered[new_col] = series.rolling(window=window, min_periods=min_periods, center=center).mean()
+        added_cols.append(new_col)
+
+    restored = ordered.loc[df.index].copy()
+    return restored, added_cols, warnings
+
+
+def apply_exponential_moving_average_features(
+    df: pd.DataFrame,
+    configs: list[dict[str, Any]],
+    *,
+    order_col: str | None = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Add exponential moving average columns."""
+    if not configs:
+        return df.copy(), [], []
+
+    ordered_index = _resolve_ordered_index(df, order_col)
+    ordered = df.loc[ordered_index].copy()
+    added_cols: list[str] = []
+    warnings: list[str] = []
+    for config in configs:
+        col = str(config.get("column"))
+        if col not in ordered.columns:
+            continue
+        span = int(config.get("span", 5))
+        min_periods = int(config.get("min_periods", 1))
+        adjust = bool(config.get("adjust", False))
+        series = pd.to_numeric(ordered[col], errors="coerce")
+        if series.notna().sum() == 0:
+            warnings.append(f"指数移動平均: 列 '{col}' は数値化できないためスキップしました。")
+            continue
+        new_col = f"{col}_ema{span}"
+        ordered[new_col] = series.ewm(span=span, min_periods=min_periods, adjust=adjust).mean()
+        added_cols.append(new_col)
+
+    restored = ordered.loc[df.index].copy()
+    return restored, added_cols, warnings
+
+
+def apply_stl_decomposition_features(
+    df: pd.DataFrame,
+    configs: list[dict[str, Any]],
+    *,
+    order_col: str | None = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Add STL decomposition component columns."""
+    if not configs:
+        return df.copy(), [], []
+
+    ordered_index = _resolve_ordered_index(df, order_col)
+    ordered = df.loc[ordered_index].copy()
+    added_cols: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        from statsmodels.tsa.seasonal import STL
+    except ImportError:
+        return df.copy(), [], ["STL分解には `statsmodels` が必要です。"]
+
+    for config in configs:
+        col = str(config.get("column"))
+        if col not in ordered.columns:
+            continue
+        period = int(config.get("period", 12))
+        seasonal = config.get("seasonal")
+        trend = config.get("trend")
+        low_pass = config.get("low_pass")
+        robust = bool(config.get("robust", False))
+        series = pd.to_numeric(ordered[col], errors="coerce")
+        valid = series.dropna()
+        if len(valid) < max(period * 2, 7):
+            warnings.append(f"STL分解: 列 '{col}' は有効データ数が不足しているためスキップしました。")
+            continue
+        try:
+            stl = STL(
+                valid,
+                period=period,
+                seasonal=int(seasonal) if seasonal is not None else 7,
+                trend=int(trend) if trend is not None else None,
+                low_pass=int(low_pass) if low_pass is not None else None,
+                robust=robust,
+            )
+            fit = stl.fit()
+        except Exception as exc:
+            warnings.append(f"STL分解: 列 '{col}' の計算に失敗しました ({exc})")
+            continue
+
+        prefix = f"{col}_stl_p{period}"
+        for suffix, values in {
+            "trend": fit.trend,
+            "seasonal": fit.seasonal,
+            "resid": fit.resid,
+        }.items():
+            new_col = f"{prefix}_{suffix}"
+            component = pd.Series(np.nan, index=ordered.index, dtype=float)
+            component.loc[valid.index] = np.asarray(values, dtype=float)
+            ordered[new_col] = component
+            added_cols.append(new_col)
+
+    restored = ordered.loc[df.index].copy()
+    return restored, added_cols, warnings
 
 
 def split_train_test_indices(
@@ -310,6 +651,9 @@ def apply_modeling_preparation(
     standardize: bool,
     lag_text: str | None,
     feature_text: str | None,
+    sma_text: str | None = None,
+    ema_text: str | None = None,
+    stl_text: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Apply common modeling preparation steps and return metadata."""
     working = df.copy()
@@ -322,6 +666,9 @@ def apply_modeling_preparation(
         "standardized_cols": [],
         "lag_cols": [],
         "feature_cols": [],
+        "sma_cols": [],
+        "ema_cols": [],
+        "stl_cols": [],
         "warnings": [],
         "train_count": 0,
         "test_count": 0,
@@ -337,6 +684,24 @@ def apply_modeling_preparation(
     working, feature_cols, feature_apply_warnings = apply_feature_expressions(working, feature_configs)
     metadata["feature_cols"] = feature_cols
     metadata["warnings"].extend(feature_apply_warnings)
+
+    sma_configs, sma_warnings = parse_sma_config_text(sma_text, list(working.columns))
+    metadata["warnings"].extend(sma_warnings)
+    working, sma_cols, sma_apply_warnings = apply_simple_moving_average_features(working, sma_configs, order_col=metadata["order_col"])
+    metadata["sma_cols"] = sma_cols
+    metadata["warnings"].extend(sma_apply_warnings)
+
+    ema_configs, ema_warnings = parse_ema_config_text(ema_text, list(working.columns))
+    metadata["warnings"].extend(ema_warnings)
+    working, ema_cols, ema_apply_warnings = apply_exponential_moving_average_features(working, ema_configs, order_col=metadata["order_col"])
+    metadata["ema_cols"] = ema_cols
+    metadata["warnings"].extend(ema_apply_warnings)
+
+    stl_configs, stl_warnings = parse_stl_config_text(stl_text, list(working.columns))
+    metadata["warnings"].extend(stl_warnings)
+    working, stl_cols, stl_apply_warnings = apply_stl_decomposition_features(working, stl_configs, order_col=metadata["order_col"])
+    metadata["stl_cols"] = stl_cols
+    metadata["warnings"].extend(stl_apply_warnings)
 
     train_idx, test_idx, split_warnings = split_train_test_indices(
         working,
@@ -355,4 +720,3 @@ def apply_modeling_preparation(
         metadata["standardized_cols"] = standardized_cols
 
     return working, metadata
-

@@ -42,6 +42,9 @@ UI は Plotly Dash、配布は PyInstaller に対応しています。
 - 欠損値行の除外
 - 選択中サンプルを欠損扱いにする外れ値除外
 - タイムラグ列追加
+- 単純移動平均（平滑化）
+- 指数移動平均（指数平滑化）
+- 季節分解（STL 分解）
 - 特徴量追加（四則演算、`log()`、`exp()`）
 - 学習データ基準の標準化
 - 学習用 / テスト用データ分割
@@ -51,6 +54,11 @@ UI は Plotly Dash、配布は PyInstaller に対応しています。
   - PCA
   - PCA 異常予兆検知（T2 / Q）
   - ICA
+- 時系列
+  - ARIMA
+  - SARIMA
+  - EWMA
+  - CUSUM
 - 回帰
   - 重回帰
   - PLS 回帰
@@ -64,9 +72,17 @@ UI は Plotly Dash、配布は PyInstaller に対応しています。
 - 学習済みモデルの保存 / 再読込
 - CV による推奨ハイパーパラメータ計算
 
+補足:
+- 時系列モデルでは、目的変数に数値列を選びます。
+- 並び順は `前後分割の順序列` を使います。時刻列や連番列を設定してください。
+
 ### 結果可視化
 - 回帰: 実測値と予測値の重ね合わせ、yy プロット、`R2`、`RMSE`、`MAE`
 - 分類: 混同行列、ROC、`AUC`
+- 時系列
+  - ARIMA / SARIMA: 学習区間とテスト区間の実測値・予測値、yy プロット、`R2`、`RMSE`、`MAE`、`AIC`、`BIC`
+  - EWMA: 実測値、EWMA 管理図、信号件数 / 信号率
+  - CUSUM: 実測値、CUSUM 管理図、正側 / 負側信号件数
 - 重要度 / 寄与度
   - 回帰係数、VIP、Permutation importance、Gain importance、SHAP など
   - PCA: Loading の 2 乗
@@ -119,6 +135,7 @@ INSIGHTA/
 - Miniforge で作成した conda 環境 `insighta`
 - Python 3.11
 - ブラウザ: Edge / Chrome 推奨
+- `statsmodels` は時系列モデルと STL 分解に使用します
 
 ### 配布版
 - Windows 64bit

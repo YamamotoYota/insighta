@@ -106,6 +106,9 @@ def build_default_ui_config() -> dict[str, Any]:
         'apply_standardize': False,
         'lag_config_text': '',
         'feature_config_text': '',
+        'sma_config_text': '',
+        'ema_config_text': '',
+        'stl_config_text': '',
     }
 
 

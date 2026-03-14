@@ -23,6 +23,10 @@ Python 本体は conda で入れ、ライブラリは `requirements.txt` を `pi
 - `assets/`
 - `data/`
 
+補足:
+- 時系列モデル（ARIMA / SARIMA / EWMA / CUSUM）と STL 分解は `statsmodels` を使います。
+- `requirements.txt` からインストールされるので、追加の個別導入は不要です。
+
 ## 1. リポジトリを配置
 
 ```powershell
