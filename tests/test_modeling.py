@@ -35,10 +35,11 @@ def test_modeling_preparation_adds_lag_and_feature_columns() -> None:
     )
 
     assert "temp_lag1" in modeled.columns
-    assert "temp_lead1" in modeled.columns
+    assert "temp_lead1" not in modeled.columns
     assert "temp_diff" in modeled.columns
     assert meta["train_count"] == 3
     assert meta["test_count"] == 3
+    assert any("情報リーク" in warning for warning in meta["warnings"])
 
 
 def test_modeling_preparation_standardizes_using_train_data() -> None:
@@ -66,6 +67,42 @@ def test_modeling_preparation_standardizes_using_train_data() -> None:
     train_values = modeled.iloc[:4]["value"]
     assert abs(float(train_values.mean())) < 1e-9
     assert np.isclose(float(train_values.std(ddof=0)), 1.0)
+
+
+def test_modeling_preparation_supports_log_and_exp_feature_expressions() -> None:
+    df = pd.DataFrame(
+        {
+            "id": [str(i) for i in range(1, 5)],
+            "time": [1, 2, 3, 4],
+            "pressure_1": [110.0, 112.0, 115.0, 118.0],
+            "pressure_2": [100.0, 101.0, 103.0, 104.0],
+            "vibration": [1.0, 2.0, 4.0, 8.0],
+            "temperature": [0.0, 0.5, 1.0, 1.5],
+        }
+    )
+
+    modeled, meta = apply_modeling_preparation(
+        df,
+        split_method="sequential",
+        train_ratio=0.75,
+        random_seed=1,
+        stratify_col=None,
+        order_col="time",
+        standardize=False,
+        lag_text="",
+        feature_text=(
+            "pressure_diff = pressure_1 - pressure_2\n"
+            "pressure_ratio = pressure_1 / pressure_2\n"
+            "vib_log = log(vibration)\n"
+            "temperature_exp = exp(temperature)"
+        ),
+    )
+
+    assert meta["warnings"] == []
+    assert np.allclose(modeled["pressure_diff"], df["pressure_1"] - df["pressure_2"])
+    assert np.allclose(modeled["pressure_ratio"], df["pressure_1"] / df["pressure_2"])
+    assert np.allclose(modeled["vib_log"], np.log(df["vibration"]))
+    assert np.allclose(modeled["temperature_exp"], np.exp(df["temperature"]))
 
 
 def test_modeling_preparation_adds_sma_ema_stl_columns() -> None:

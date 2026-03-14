@@ -21,13 +21,14 @@ from typing import Any
 
 import pandas as pd
 
+from .runtime_config import FORCED_PYTHONNET_RUNTIME, apply_pythonnet_runtime_env
+
 SUPPORTED_PI_DATA_SOURCES: tuple[str, ...] = ("pi_da_tag", "af_attribute", "af_event_frame")
 SUPPORTED_PI_QUERY_TYPES: tuple[str, ...] = ("snapshot", "recorded", "interpolated", "summary")
 SUPPORTED_SUMMARY_FUNCTIONS: tuple[str, ...] = ("average", "min", "max", "sum", "count", "std")
 
-FORCED_PYTHONNET_RUNTIME = "netfx"
 # Force pythonnet runtime selection at import time so shell/system env does not affect behavior.
-os.environ["PYTHONNET_RUNTIME"] = FORCED_PYTHONNET_RUNTIME
+apply_pythonnet_runtime_env()
 _NAME_SPLIT_PATTERN = re.compile(r"[\n\r\t,;、，；]+")
 
 
@@ -304,7 +305,7 @@ def _infer_pipc_root_from_dll(dll_path: Path) -> Path | None:
 
 def _prepare_afsdk_environment() -> None:
     """Prepare process-level env vars for robust AF SDK loading."""
-    os.environ["PYTHONNET_RUNTIME"] = FORCED_PYTHONNET_RUNTIME
+    apply_pythonnet_runtime_env()
 
     candidates = _afsdk_dll_candidates()
     parent_dirs = [str(path.parent) for path in candidates if path.parent]

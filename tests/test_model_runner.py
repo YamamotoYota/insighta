@@ -11,6 +11,7 @@ import pytest
 
 from src.model_runner import (
     default_hyperparam_grid_text,
+    default_model_key,
     estimate_hyperparam_grid_combinations,
     model_description,
     model_label,
@@ -21,6 +22,10 @@ from src.model_runner import (
     recommended_randomized_n_iter,
     run_model,
 )
+
+
+def test_default_model_key_is_pca() -> None:
+    assert default_model_key() == "unsup_pca"
 
 
 def test_parse_param_text_valid_json() -> None:
@@ -233,4 +238,29 @@ def test_time_series_models_run(model_key: str, hyperparams: dict[str, object]) 
     assert result["model_label"]
     assert len(result["figures"]) >= 2
     assert not result["metrics"].empty
+
+
+def test_classification_raises_when_test_contains_unseen_label() -> None:
+    df = pd.DataFrame(
+        {
+            "id": [str(i) for i in range(6)],
+            "time": [1, 2, 3, 4, 5, 6],
+            "x1": [0.1, 0.2, 0.9, 1.0, 1.5, 1.6],
+            "label": ["A", "B", "A", "B", "C", "C"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="学習時に存在しないクラス"):
+        run_model(
+            df,
+            model_key="cls_rf",
+            feature_cols=["x1"],
+            target_col="label",
+            split_method="sequential",
+            train_ratio=0.67,
+            random_seed=42,
+            split_stratify_col=None,
+            split_order_col="time",
+            hyperparams={},
+        )
 

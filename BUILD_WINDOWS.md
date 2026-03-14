@@ -1,31 +1,32 @@
 <!-- Copyright (c) 2026 Yota Yamamoto -->
 <!-- SPDX-License-Identifier: MIT -->
 
-# INSIGHTA 再ビルド手順（Windows / Miniforge 前提）
+# INSIGHTA 再ビルド手順（Windows / 再現性重視）
 
-この手順書は、Miniforge で作成した conda 環境 `insighta` を使って `INSIGHTA.exe` を再ビルドするための手順です。  
-Python 本体は conda で入れ、ライブラリは `requirements.txt` を `pip` で入れる前提に絞っています。
+この手順書は、別 PC でも同じ手順で `INSIGHTA.exe` を再ビルドできるようにした手順です。  
+推奨は `environment.yml` を使う方法で、`venv` / `conda` のどちらでも実施できます。
 
 ## 0. 前提
 
 - Windows PC
-- Miniforge
 - リポジトリ一式
-- conda 環境名は `insighta`
 - Python バージョンは `3.11`
+- 64bit Python
 
 必要な主なファイル:
 - `app.py`
 - `INSIGHTA.spec`
 - `build_windows.py`
 - `requirements.txt`
+- `requirements-build.txt`
+- `requirements-optional-pi.txt`
+- `environment.yml`
 - `src/`
 - `assets/`
-- `data/`
 
 補足:
 - 時系列モデル（ARIMA / SARIMA / EWMA / CUSUM）と STL 分解は `statsmodels` を使います。
-- `requirements.txt` からインストールされるので、追加の個別導入は不要です。
+- PI 機能を使う場合だけ `pythonnet` と PI AF Client / AF SDK が追加で必要です。
 
 ## 1. リポジトリを配置
 
@@ -34,19 +35,26 @@ git clone <YOUR_REPOSITORY_URL> C:\work\INSIGHTA
 cd C:\work\INSIGHTA
 ```
 
-## 2. conda 環境を作成
+## 2. 推奨: `environment.yml` から環境を作成
 
 ```powershell
-conda create -n insighta python=3.11 -y
+conda env create -f environment.yml
+conda activate insighta
 ```
 
-## 3. 依存関係をインストール
+## 3. 代替: `venv` または既存 Python に入れる場合
 
 ```powershell
-conda activate insighta
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install pyinstaller
+python -m pip install -r requirements-build.txt
+```
+
+PI 機能も配布物に含めたい場合は追加で次を実行します。
+
+```powershell
+python -m pip install -r requirements-optional-pi.txt
 ```
 
 確認:
@@ -58,25 +66,28 @@ python -c "import sys; print(sys.executable)"
 期待値の例:
 
 ```text
-C:\Users\<ユーザー名>\miniforge3\envs\insighta\python.exe
+C:\path\to\python.exe
 ```
 
 ## 4. 通常実行で動作確認
 
 ```powershell
-conda activate insighta
 python app.py
 ```
 
 確認項目:
-- ブラウザで `http://127.0.0.1:8050` が開く
+- ブラウザで既定の `http://127.0.0.1:8050` が開く
 - INSIGHTA の画面が表示される
 - CSV / Excel / SQL / PI のいずれかでデータ読み込みができる
+
+必要なら次の環境変数で接続先を変えられます。
+
+- `INSIGHTA_HOST`
+- `INSIGHTA_PORT`
 
 ## 5. 推奨ビルド方法
 
 ```powershell
-conda activate insighta
 python .\build_windows.py
 ```
 
@@ -91,7 +102,6 @@ python .\build_windows.py
 テストを省略する場合:
 
 ```powershell
-conda activate insighta
 python .\build_windows.py --skip-tests
 ```
 
@@ -103,7 +113,7 @@ python .\build_windows.py --skip-tests
 
 期待される挙動:
 - 数秒後にブラウザが自動起動する
-- `http://127.0.0.1:8050` に INSIGHTA が表示される
+- 既定の `http://127.0.0.1:8050` に INSIGHTA が表示される
 - 終了ボタンで停止できる
 
 ## 7. 最近の大容量データ対応について
@@ -145,8 +155,8 @@ git lfs ls-files
 - 実行中プロセスを止めてから再ビルドしてください
 
 ### Excel 読み込みで `openpyxl` エラー
-- `insighta` 環境以外の Python を使っている可能性があります
-- `conda activate insighta` 後に次で確認してください
+- 想定外の Python 環境を使っている可能性があります
+- 有効化した環境で次を確認してください
 
 ```powershell
 python -c "import sys, pandas, openpyxl; print(sys.executable); print(pandas.__version__); print(openpyxl.__version__)"
@@ -157,5 +167,6 @@ python -c "import sys, pandas, openpyxl; print(sys.executable); print(pandas.__v
 - SQL Server は ODBC Driver 17/18 を確認してください
 
 ### PI AF / PI DA が取得できない
+- `pythonnet` が入っていないと PI 機能は使えません
 - PI AF Client / AF SDK のインストールと 64bit 一致を確認してください
 - PI 機能は Windows 前提です

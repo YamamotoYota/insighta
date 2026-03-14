@@ -103,7 +103,7 @@ def build_default_ui_config() -> dict[str, Any]:
         'split_seed': 42,
         'split_stratify_col': None,
         'split_order_col': None,
-        'apply_standardize': False,
+        'apply_standardize': True,
         'lag_config_text': '',
         'feature_config_text': '',
         'sma_config_text': '',

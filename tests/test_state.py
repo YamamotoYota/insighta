@@ -27,6 +27,7 @@ def test_build_default_ui_config_uses_shared_graph_keys() -> None:
     config = build_default_ui_config()
     assert config['visible_graphs'] == visible_graph_keys()
     assert config['show_graphs'] is False
+    assert config['apply_standardize'] is True
 
 
 

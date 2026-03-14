@@ -103,7 +103,7 @@ MODEL_DEFINITIONS: dict[str, dict[str, str]] = {
     },
 }
 
-DEFAULT_MODEL_KEY = "reg_linear"
+DEFAULT_MODEL_KEY = "unsup_pca"
 PCA_LIMIT_SCALE_REFERENCE_PERCENT = 90.0
 
 
@@ -557,6 +557,7 @@ def suggest_hyperparameters(
     cv_sample_max_rows: int | float | None = None,
     preset_params: dict[str, Any] | None = None,
     selected_ids: list[str] | None = None,
+    standardize_numeric: bool = True,
 ) -> tuple[dict[str, Any], str]:
     """Suggest hyperparameters from training data.
 
@@ -584,6 +585,7 @@ def suggest_hyperparameters(
             prepared["x_train"],
             random_seed=prepared["random_seed"],
             params=preset_params,
+            standardize_numeric=standardize_numeric,
         )
         return params, summary
 
@@ -624,7 +626,7 @@ def suggest_hyperparameters(
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
 
-    preprocessor = _build_feature_preprocessor(x_train)
+    preprocessor = _build_feature_preprocessor(x_train, standardize_numeric=standardize_numeric)
     base_estimator = _build_estimator(model_key, {}, random_seed=prepared["random_seed"])
     grid = dict(candidate_grid) if candidate_grid is not None else hyperparam_grid(model_key)
     if not grid:
@@ -748,6 +750,7 @@ def run_model(
     split_order_col: str | None,
     hyperparams: dict[str, Any] | None,
     selected_ids: list[str] | None = None,
+    standardize_numeric: bool = True,
 ) -> dict[str, Any]:
     """Train selected model and build evaluation artifacts."""
     task = model_task(model_key)
@@ -766,6 +769,7 @@ def run_model(
             split_order_col=split_order_col,
             selected_ids=selected_ids,
         )
+        prepared["standardize_numeric"] = bool(standardize_numeric)
         return _run_unsupervised_model(model_key, prepared, merged_params)
     if task == "timeseries":
         prepared = _prepare_time_series_dataset(
@@ -789,6 +793,7 @@ def run_model(
         split_stratify_col=split_stratify_col,
         split_order_col=split_order_col,
     )
+    prepared["standardize_numeric"] = bool(standardize_numeric)
     if task == "regression":
         return _run_regression_model(model_key, prepared, merged_params)
     return _run_classification_model(model_key, prepared, merged_params)
@@ -1073,15 +1078,15 @@ def _prepare_time_series_dataset(
     split_warnings: list[str] = []
     safe_method = normalize_split_method(split_method)
     if safe_method != "sequential":
-        split_warnings.append("時系列モデルでは分割方法を前後分割として扱います。")
+        split_warnings.append("時系列モデルでは分割方法を『時系列順に前半/後半で分ける』として扱います。")
 
     if split_order_col and split_order_col in df.columns:
         try:
             working = working.sort_values("__axis__", kind="mergesort")
         except Exception:
-            split_warnings.append(f"前後分割の順序列 '{split_order_col}' を並べ替えに使えないため、現在順序を使用します。")
+            split_warnings.append(f"時系列順に並べる列 '{split_order_col}' を並べ替えに使えないため、現在順序を使用します。")
     elif split_order_col:
-        split_warnings.append(f"前後分割の順序列 '{split_order_col}' が見つからないため、現在順序を使用します。")
+        split_warnings.append(f"時系列順に並べる列 '{split_order_col}' が見つからないため、現在順序を使用します。")
 
     safe_ratio = normalize_train_ratio(train_ratio)
     safe_seed = normalize_random_seed(random_seed)
@@ -1311,8 +1316,8 @@ def _suggest_time_series_params(
     return best_params, f"学習データの信号率が 1% に近い CUSUM 候補を提案します (signal_ratio={best_ratio:.4f})。"
 
 
-def _build_feature_preprocessor(x_train: pd.DataFrame) -> Any:
-    """Build column transformer with standardization on numeric features."""
+def _build_feature_preprocessor(x_train: pd.DataFrame, *, standardize_numeric: bool = True) -> Any:
+    """Build column transformer for numeric/categorical features."""
     from sklearn.compose import ColumnTransformer
     from sklearn.impute import SimpleImputer
     from sklearn.pipeline import Pipeline
@@ -1327,12 +1332,10 @@ def _build_feature_preprocessor(x_train: pd.DataFrame) -> Any:
 
     transformers: list[tuple[str, Any, list[str]]] = []
     if numeric_cols:
-        num_pipe = Pipeline(
-            [
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-            ]
-        )
+        numeric_steps: list[tuple[str, Any]] = [("imputer", SimpleImputer(strategy="median"))]
+        if standardize_numeric:
+            numeric_steps.append(("scaler", StandardScaler()))
+        num_pipe = Pipeline(numeric_steps)
         transformers.append(("num", num_pipe, numeric_cols))
 
     if categorical_cols:
@@ -1683,7 +1686,7 @@ def _run_regression_model(
     y_train = pd.to_numeric(prepared["y_train"], errors="coerce").to_numpy()
     y_test = pd.to_numeric(prepared["y_test"], errors="coerce").to_numpy()
 
-    preprocessor = _build_feature_preprocessor(x_train)
+    preprocessor = _build_feature_preprocessor(x_train, standardize_numeric=bool(prepared.get("standardize_numeric", True)))
     estimator = _build_estimator(model_key, params, random_seed=prepared["random_seed"])
 
     model = TransformedTargetRegressor(
@@ -1836,7 +1839,13 @@ def _run_classification_model(
     y_test_raw = prepared["y_test"].astype(str).to_numpy()
 
     label_encoder = LabelEncoder()
-    label_encoder.fit(np.concatenate([y_train_raw, y_test_raw]))
+    label_encoder.fit(y_train_raw)
+    unseen_test_labels = sorted(set(y_test_raw) - set(label_encoder.classes_))
+    if unseen_test_labels:
+        preview = ", ".join(unseen_test_labels[:5])
+        raise ValueError(
+            f"テストデータに学習時に存在しないクラスが含まれています: {preview}"
+        )
     y_train = label_encoder.transform(y_train_raw)
     y_test = label_encoder.transform(y_test_raw)
     class_names = list(label_encoder.classes_)
@@ -1844,7 +1853,7 @@ def _run_classification_model(
     if len(class_names) < 2:
         raise ValueError("分類モデルでは2クラス以上が必要です。")
 
-    preprocessor = _build_feature_preprocessor(x_train)
+    preprocessor = _build_feature_preprocessor(x_train, standardize_numeric=bool(prepared.get("standardize_numeric", True)))
     estimator = _build_estimator(model_key, params, random_seed=prepared["random_seed"])
     model = Pipeline([("prep", preprocessor), ("model", estimator)])
     model.fit(x_train, y_train)
@@ -2702,7 +2711,7 @@ def _run_unsupervised_model(
     x_train: pd.DataFrame = prepared["x_train"]
     x_test: pd.DataFrame = prepared["x_test"]
 
-    preprocessor = _build_feature_preprocessor(x_train)
+    preprocessor = _build_feature_preprocessor(x_train, standardize_numeric=bool(prepared.get("standardize_numeric", True)))
     x_train_scaled = np.asarray(preprocessor.fit_transform(x_train), dtype=float)
     x_test_scaled = np.asarray(preprocessor.transform(x_test), dtype=float)
     transformed_names = _transformed_feature_names(preprocessor)
@@ -3039,9 +3048,10 @@ def _suggest_unsupervised_params(
     *,
     random_seed: int,
     params: dict[str, Any] | None = None,
+    standardize_numeric: bool = True,
 ) -> tuple[dict[str, Any], str]:
     """Suggest unsupervised hyperparameters by train split heuristics."""
-    preprocessor = _build_feature_preprocessor(x_train)
+    preprocessor = _build_feature_preprocessor(x_train, standardize_numeric=standardize_numeric)
     x_scaled = preprocessor.fit_transform(x_train)
     feature_count = int(x_scaled.shape[1])
     max_n = max(2, min(10, feature_count))

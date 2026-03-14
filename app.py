@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import multiprocessing
-import os
 import socket
 import sys
 import threading
@@ -17,8 +16,10 @@ from uuid import uuid4
 
 from dash import Dash
 
+from src.runtime_config import apply_pythonnet_runtime_env, resolve_server_host, resolve_server_port
+
 # Force pythonnet runtime in this process before any module can import pythonnet.
-os.environ["PYTHONNET_RUNTIME"] = "netfx"
+apply_pythonnet_runtime_env()
 
 from src.callbacks import register_callbacks
 from src.layout import create_layout
@@ -30,7 +31,7 @@ def _build_initial_state(app_run_id: str) -> tuple[dict, dict, dict, str]:
     current_data = build_empty_data_state(app_run_id=app_run_id)
     ui_config = build_default_ui_config()
     view_config = build_default_view_config(current_data["metadata"])
-    status_message = "CSV/Excelアップロード、SQL、またはPI（AF SDK）からデータを読み込んでください。"
+    status_message = "CSVまたはExcelファイルをアップロードするか、SQLまたはPI Systemのデータベースに接続してデータを取得してください。"
     return current_data, ui_config, view_config, status_message
 
 
@@ -95,8 +96,8 @@ app: Dash | None = create_app() if __name__ != "__main__" else None
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-    host = "127.0.0.1"
-    port = 8050
+    host = resolve_server_host()
+    port = resolve_server_port()
     debug_mode = not bool(getattr(sys, "frozen", False))
     if app is None:
         app = create_app()

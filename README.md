@@ -74,7 +74,7 @@ UI は Plotly Dash、配布は PyInstaller に対応しています。
 
 補足:
 - 時系列モデルでは、目的変数に数値列を選びます。
-- 並び順は `前後分割の順序列` を使います。時刻列や連番列を設定してください。
+- 並び順は `時系列順に並べる列` を使います。時刻列や連番列を設定してください。
 
 ### 結果可視化
 - 回帰: 実測値と予測値の重ね合わせ、yy プロット、`R2`、`RMSE`、`MAE`
@@ -98,6 +98,9 @@ INSIGHTA/
 ├─ BUILD_WINDOWS.md
 ├─ LICENSE
 ├─ requirements.txt
+├─ requirements-build.txt
+├─ requirements-optional-pi.txt
+├─ environment.yml
 ├─ assets/
 ├─ data/
 ├─ release/
@@ -132,8 +135,8 @@ INSIGHTA/
 
 ### 開発 / ソースコード実行
 - Windows 64bit
-- Miniforge で作成した conda 環境 `insighta`
 - Python 3.11
+- `venv` または `conda` / `Miniforge` のいずれでも可
 - ブラウザ: Edge / Chrome 推奨
 - `statsmodels` は時系列モデルと STL 分解に使用します
 
@@ -144,28 +147,32 @@ INSIGHTA/
 補足:
 - SQL Server 接続には ODBC Driver が必要です。
 - PI AF / PI DA 取得には PI AF Client と AF SDK が必要です。
+- `pythonnet` は PI 機能を使う場合のみ追加で必要です。
 - PI 系機能は Windows 前提です。
 
 ## 4. セットアップ
 
-INSIGHTA の開発・実行・再ビルドは、Miniforge で作成した conda 環境 `insighta` を前提にします。  
-Python 本体は conda で入れ、ライブラリは `requirements.txt` を `pip` で入れる想定です。
+推奨は `environment.yml` から再現性のある環境を作る方法です。  
+軽量に始める場合は、任意の Python 3.11 仮想環境に `requirements.txt` / `requirements-build.txt` を入れてください。
 
 ```powershell
-conda create -n insighta python=3.11 -y
+conda env create -f environment.yml
 conda activate insighta
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install pyinstaller
 ```
 
-### VS Code で Miniforge 環境が切り替わらない場合
-
-PowerShell で `C:/Users/.../Scripts/activate` を直接実行すると、`conda activate` の内部状態が壊れることがあります。  
-VS Code のターミナルでは次だけを使ってください。
+`venv` を使う場合:
 
 ```powershell
-conda activate insighta
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-build.txt
+```
+
+PI 機能も使う場合は追加で次を入れてください。
+
+```powershell
+python -m pip install -r requirements-optional-pi.txt
 ```
 
 確認コマンド:
@@ -177,7 +184,7 @@ python -c "import sys; print(sys.executable)"
 期待値の例:
 
 ```text
-C:\Users\<ユーザー名>\miniforge3\envs\insighta\python.exe
+C:\path\to\python.exe
 ```
 
 ## 5. 起動方法
@@ -185,18 +192,22 @@ C:\Users\<ユーザー名>\miniforge3\envs\insighta\python.exe
 ### ソースコード版
 
 ```powershell
-conda activate insighta
 python app.py
 ```
 
 ブラウザで次を開きます。
 
-- `http://127.0.0.1:8050`
+- 既定: `http://127.0.0.1:8050`
+
+必要なら次の環境変数で変更できます。
+
+- `INSIGHTA_HOST`
+- `INSIGHTA_PORT`
 
 ### 配布版 exe
 
 - `release/INSIGHTA/INSIGHTA.exe` を実行
-- 数秒後にブラウザで `http://127.0.0.1:8050` が自動で開く
+- 数秒後にブラウザで既定の `http://127.0.0.1:8050` が自動で開く
 - 自動で開かない場合は手動で同 URL を開く
 
 終了方法:
@@ -209,9 +220,9 @@ python app.py
 
 画面上部の各入力手段からデータを読み込みます。
 
-- `CSV / Excel をアップロード`
-- `DB（SQL）から読み込む`
-- `PI（AF SDK）から読み込む`
+- `ファイル`
+- `SQLデータベース`
+- `PI System`
 
 読み込み後のデータテーブルは、すべての読み込み UI の下に表示されます。
 
@@ -299,14 +310,12 @@ python -m pytest -q
 通常は次で十分です。
 
 ```powershell
-conda activate insighta
 python .\build_windows.py
 ```
 
 テスト省略時:
 
 ```powershell
-conda activate insighta
 python .\build_windows.py --skip-tests
 ```
 

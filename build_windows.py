@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import platform
 import shutil
+import struct
 import subprocess
 import sys
 from datetime import datetime
@@ -17,6 +20,22 @@ def run_command(command: list[str], cwd: Path) -> None:
     """Run command and fail fast on non-zero exit."""
     print("$", " ".join(command))
     subprocess.run(command, cwd=str(cwd), check=True)
+
+
+def verify_build_environment() -> None:
+    """Validate Python runtime used for Windows packaging."""
+    if sys.platform != "win32":
+        raise RuntimeError("Windows 向けビルドは Windows 上で実行してください。")
+    if sys.version_info[:2] != (3, 11):
+        raise RuntimeError(f"Python 3.11 系でビルドしてください。現在: {platform.python_version()}")
+    if struct.calcsize("P") * 8 != 64:
+        raise RuntimeError("配布用 exe は 64bit Python 環境でビルドしてください。")
+
+
+def warn_missing_optional_modules() -> None:
+    """Print informative warnings for optional features not included in the build env."""
+    if importlib.util.find_spec("pythonnet") is None:
+        print("WARNING: pythonnet が見つかりません。今回の exe では PI 機能を使用できない可能性があります。")
 
 
 def main() -> int:
@@ -34,6 +53,8 @@ def main() -> int:
 
     print("[1/4] Python executable")
     print(sys.executable)
+    verify_build_environment()
+    warn_missing_optional_modules()
 
     if not args.skip_tests:
         print("[2/4] Run tests")

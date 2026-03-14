@@ -79,6 +79,30 @@ MODEL_ARTIFACT_CACHE: dict[str, dict[str, Any]] = {}
 ANALYSIS_VIEW_CACHE: dict[str, tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]] = {}
 ANALYSIS_VIEW_CACHE_ORDER: list[str] = []
 ANALYSIS_VIEW_CACHE_LIMIT = 4
+WINDOWS_RESERVED_FILENAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+}
 
 
 def _schedule_server_shutdown(shutdown_callable: Any) -> None:
@@ -160,6 +184,24 @@ def _loaded_model_summary_text(store_data: dict[str, Any] | None) -> str:
     return f"現在のモデル: {label}{task_text}{target_text}{feat_text}"
 
 
+def _sanitize_download_stem(name: str | None, fallback: str) -> str:
+    """Return a browser download-safe filename stem."""
+    candidate = str(name or "").strip()
+    if "." in candidate:
+        candidate = candidate.rsplit(".", 1)[0]
+
+    translation = str.maketrans({char: "_" for char in '<>:"/\\|?*'})
+    candidate = candidate.translate(translation).replace("\r", "_").replace("\n", "_").replace("\t", "_")
+    candidate = candidate.strip(" .")
+    if not candidate:
+        candidate = str(fallback or "").strip(" .")
+    if not candidate:
+        candidate = "insighta"
+    if candidate.upper() in WINDOWS_RESERVED_FILENAMES:
+        candidate = f"{candidate}_"
+    return candidate
+
+
 def _sql_connection_state_payload(
     *,
     dbms: str,
@@ -221,7 +263,8 @@ def _analysis_view_cache_key(
     selected_ids: list[str] | None,
 ) -> str:
     """Build a stable cache key for the analysis dataframe/view."""
-    config = ui_config or {}
+    config = dict(ui_config or {})
+    config["apply_standardize"] = False
     metadata_columns = list((current_data or {}).get("metadata", {}).get("columns", []))
     selected_for_cache = (
         normalize_id_list(selected_ids)
@@ -291,7 +334,8 @@ def _build_filtered_analysis_dataframe(
     if cached is not None:
         return cached
 
-    config = ui_config or {}
+    config = dict(ui_config or {})
+    config["apply_standardize"] = False
     typed_df = _prepare_typed_dataframe(current_data, config)
     modeled_df, modeling_meta = _apply_modeling_config(typed_df, config)
     filtered_df = apply_analysis_filters(
@@ -486,14 +530,74 @@ def _standardize_enabled(values: list[str] | None) -> bool:
     return "on" in set(values or [])
 
 
+def _has_config_text(value: Any) -> bool:
+    """Return whether textarea-like config contains a non-empty value."""
+    return bool(str(value or "").strip())
+
+
+def _uses_temporal_model_features(config: dict[str, Any] | None) -> bool:
+    """Return whether modeling config uses order-dependent engineered features."""
+    cfg = config or {}
+    return any(
+        _has_config_text(cfg.get(key))
+        for key in ("lag_config_text", "sma_config_text", "ema_config_text")
+    )
+
+
+def _effective_model_split_method(config: dict[str, Any] | None) -> str:
+    """Return split method actually used for model evaluation."""
+    cfg = config or {}
+    method = normalize_split_method(cfg.get("split_method"))
+    if method != "sequential" and _uses_temporal_model_features(cfg):
+        return "sequential"
+    return method
+
+
 def _split_method_label(method: str) -> str:
     """Convert split method key to Japanese label."""
     labels = {
-        "random": "ランダム",
-        "stratified_random": "層別ランダム",
-        "sequential": "前後",
+        "random": "ランダムに分ける",
+        "stratified_random": "クラス比率を保って分ける",
+        "sequential": "時系列順に前半/後半で分ける",
     }
     return labels.get(method, method)
+
+
+def _source_button_style(active: bool) -> dict[str, str]:
+    """Return style for the data-source switch buttons."""
+    base = {
+        "border": "1px solid #c9d2e3",
+        "borderRadius": "8px",
+        "padding": "8px 14px",
+        "cursor": "pointer",
+        "fontWeight": "600",
+    }
+    if active:
+        return {
+            **base,
+            "backgroundColor": "#1f5aa6",
+            "borderColor": "#1f5aa6",
+            "color": "#fff",
+        }
+    return {
+        **base,
+        "backgroundColor": "#f5f7fb",
+        "color": "#183153",
+    }
+
+
+def _source_panel_style(active: bool) -> dict[str, str]:
+    """Return style for the currently selected data-source panel."""
+    if not active:
+        return {"display": "none"}
+    return {
+        "display": "block",
+        "border": "1px solid #d9e0ec",
+        "borderRadius": "10px",
+        "padding": "14px",
+        "backgroundColor": "#fbfcfe",
+        "marginBottom": "12px",
+    }
 
 
 def _normalize_percent_input(value: Any, *, default_value: float, min_value: float = 50.0, max_value: float = 99.9) -> float:
@@ -536,37 +640,46 @@ def _pca_monitor_param_overrides(
     }
 
 
-def _build_modeling_summary(metadata: dict[str, Any]) -> html.Div:
+def _build_modeling_summary(
+    metadata: dict[str, Any],
+    *,
+    standardize_enabled: bool,
+    effective_split_method: str,
+    temporal_split_forced: bool,
+    stl_visible_only: bool,
+) -> html.Div:
     """Render modeling preparation summary panel."""
     if not metadata:
         return html.Div()
 
     items: list[str] = [
-        f"分割: {_split_method_label(str(metadata.get('split_method', '')))}",
-        f"学習/テスト: {metadata.get('train_count', 0)} / {metadata.get('test_count', 0)}",
+        f"分割方法: {_split_method_label(effective_split_method)}",
+        f"学習 / テスト件数: {metadata.get('train_count', 0)} / {metadata.get('test_count', 0)}",
+        f"説明変数の標準化: {'ON' if standardize_enabled else 'OFF'}",
     ]
 
-    standardized_cols = metadata.get("standardized_cols", [])
     lag_cols = metadata.get("lag_cols", [])
     feature_cols = metadata.get("feature_cols", [])
     sma_cols = metadata.get("sma_cols", [])
     ema_cols = metadata.get("ema_cols", [])
     stl_cols = metadata.get("stl_cols", [])
 
-    if standardized_cols:
-        items.append(f"標準化列: {len(standardized_cols)}")
     if lag_cols:
-        items.append(f"追加ラグ列: {len(lag_cols)}")
+        items.append(f"ラグ列: {len(lag_cols)}")
     if feature_cols:
-        items.append(f"追加特徴量: {len(feature_cols)}")
+        items.append(f"計算式で追加した列: {len(feature_cols)}")
     if sma_cols:
-        items.append(f"単純移動平均列: {len(sma_cols)}")
+        items.append(f"移動平均列: {len(sma_cols)}")
     if ema_cols:
         items.append(f"指数移動平均列: {len(ema_cols)}")
     if stl_cols:
-        items.append(f"STL分解列: {len(stl_cols)}")
+        items.append(f"季節分解列: {len(stl_cols)}")
 
     warnings: list[str] = list(metadata.get("warnings", []))
+    if temporal_split_forced:
+        warnings.append("時系列依存の加工があるため、モデルの評価では『時系列順に前半/後半で分ける』を使用します。")
+    if stl_visible_only:
+        warnings.append("季節分解（STL）は参考表示用です。予測性能評価のためのモデル入力には含めません。")
     warning_lines = [html.Li(msg) for msg in warnings[:8]]
 
     children: list[Any] = [html.Div(" | ".join(items))]
@@ -583,14 +696,15 @@ def _prepare_modeling_runtime_dataframe(
     """Build dataframe for model training from current runtime settings.
 
     Notes:
-        - lag/feature generation is applied from shared config.
-        - global analysis-only standardization is disabled for training input;
-          model training module performs train-based standardization internally.
+        - lag/feature/SMA/EMA generation is applied from shared config.
+        - STL decomposition is omitted from model input to avoid leakage.
+        - feature standardization is handled inside the model training pipeline.
     """
     cfg = dict(ui_config or {})
     typed_df = _prepare_typed_dataframe(current_data, cfg)
     modeling_cfg = dict(cfg)
     modeling_cfg["apply_standardize"] = False
+    modeling_cfg["stl_config_text"] = ""
     modeled_df, _ = _apply_modeling_config(typed_df, modeling_cfg)
     filtered_df = apply_analysis_filters(
         modeled_df,
@@ -645,6 +759,9 @@ def _render_modeling_result_panel(result: dict[str, Any]) -> html.Div:
                         data=display_df.to_dict("records"),
                         style_table={"overflowX": "auto"},
                         style_cell={"fontSize": 12, "textAlign": "left"},
+                        filter_action="native",
+                        sort_action="native",
+                        sort_mode="multi",
                         page_size=15,
                     ),
                 ]
@@ -699,6 +816,10 @@ def _render_modeling_result_panel(result: dict[str, Any]) -> html.Div:
                 data=metric_records,
                 style_table={"overflowX": "auto"},
                 style_cell={"fontSize": 12, "textAlign": "left"},
+                filter_action="native",
+                sort_action="native",
+                sort_mode="multi",
+                page_size=15,
             ),
             html.Div(
                 graph_nodes,
@@ -1312,6 +1433,38 @@ def register_callbacks(app: Dash) -> None:
         return config
 
     @app.callback(
+        Output("file-source-button", "style"),
+        Output("sql-source-button", "style"),
+        Output("pi-source-button", "style"),
+        Output("file-source-panel", "style"),
+        Output("sql-source-panel", "style"),
+        Output("pi-source-panel", "style"),
+        Input("file-source-button", "n_clicks"),
+        Input("sql-source-button", "n_clicks"),
+        Input("pi-source-button", "n_clicks"),
+    )
+    def toggle_data_source_panels(
+        _file_clicks: int | None,
+        _sql_clicks: int | None,
+        _pi_clicks: int | None,
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+        trigger = callback_context.triggered_id
+        active_panel = "file"
+        if trigger == "sql-source-button":
+            active_panel = "sql"
+        elif trigger == "pi-source-button":
+            active_panel = "pi"
+
+        return (
+            _source_button_style(active_panel == "file"),
+            _source_button_style(active_panel == "sql"),
+            _source_button_style(active_panel == "pi"),
+            _source_panel_style(active_panel == "file"),
+            _source_panel_style(active_panel == "sql"),
+            _source_panel_style(active_panel == "pi"),
+        )
+
+    @app.callback(
         Output("view-config-store", "data"),
         Input("current-data-store", "data"),
         Input("x-dropdown", "value"),
@@ -1335,8 +1488,10 @@ def register_callbacks(app: Dash) -> None:
         if not current_data or not has_current_dataset(current_data):
             return build_default_view_config({})
 
-        typed_df = _prepare_typed_dataframe(current_data, ui_config or {})
-        modeled_df, _ = _apply_modeling_config(typed_df, ui_config or {})
+        analysis_cfg = dict(ui_config or {})
+        analysis_cfg["apply_standardize"] = False
+        typed_df = _prepare_typed_dataframe(current_data, analysis_cfg)
+        modeled_df, _ = _apply_modeling_config(typed_df, analysis_cfg)
         runtime_metadata = build_runtime_metadata(modeled_df, id_col=ID_COLUMN)
         all_cols = _plot_columns(list(runtime_metadata.get("columns", [])))
         numeric_cols = list(runtime_metadata.get("numeric_cols", []))
@@ -1474,6 +1629,7 @@ def register_callbacks(app: Dash) -> None:
         if dtype_table_rows is not None:
             effective_cfg["type_overrides"] = _extract_type_overrides(dtype_table_rows, non_id_cols)
 
+        effective_cfg["apply_standardize"] = False
         typed_df = _prepare_typed_dataframe(current_data, effective_cfg)
         modeled_df, _ = _apply_modeling_config(typed_df, effective_cfg)
         runtime_metadata = build_runtime_metadata(modeled_df, id_col=ID_COLUMN)
@@ -1562,7 +1718,7 @@ def register_callbacks(app: Dash) -> None:
         elif task == "classification":
             help_text = "分類モデルの目的変数を選択してください。"
         else:
-            help_text = "時系列モデルでは目的変数となる数値の時系列列を選択してください。説明変数は使いません。順序列は『前後分割の順序列』を使います。"
+            help_text = "時系列モデルでは目的変数となる数値の時系列列を選択してください。説明変数は使いません。順序列は『時系列順に並べる列』を使います。"
 
         if not _is_current_run_data(current_data, app_run_data) or not current_data or not has_current_dataset(current_data):
             return [], [], None, [], (not requires_target), help_text
@@ -1775,7 +1931,7 @@ def register_callbacks(app: Dash) -> None:
                 model_key=model_key,
                 feature_cols=[str(col) for col in (feature_cols or [])],
                 target_col=target_col,
-                split_method=normalize_split_method(cfg.get("split_method")),
+                split_method=_effective_model_split_method(cfg),
                 train_ratio=normalize_train_ratio(cfg.get("train_ratio")),
                 random_seed=normalize_random_seed(cfg.get("split_seed")),
                 split_stratify_col=(cfg.get("split_stratify_col") or None),
@@ -1787,6 +1943,7 @@ def register_callbacks(app: Dash) -> None:
                 cv_sample_max_rows=cv_sample_max_rows,
                 preset_params=pca_overrides,
                 selected_ids=selected_ids,
+                standardize_numeric=bool(cfg.get("apply_standardize", True)),
             )
             return format_param_text(suggested), f"{model_label(model_key)} 推奨値: {summary}"
         except Exception as exc:
@@ -1863,13 +2020,14 @@ def register_callbacks(app: Dash) -> None:
                 model_key=model_key,
                 feature_cols=[str(col) for col in (feature_cols or [])],
                 target_col=target_col,
-                split_method=normalize_split_method(cfg.get("split_method")),
+                split_method=_effective_model_split_method(cfg),
                 train_ratio=normalize_train_ratio(cfg.get("train_ratio")),
                 random_seed=normalize_random_seed(cfg.get("split_seed")),
                 split_stratify_col=(cfg.get("split_stratify_col") or None),
                 split_order_col=(cfg.get("split_order_col") or None),
                 hyperparams=params,
                 selected_ids=selected_ids,
+                standardize_numeric=bool(cfg.get("apply_standardize", True)),
             )
             artifact_bundle = result.get("artifact_bundle")
             if not isinstance(artifact_bundle, dict):
@@ -1908,11 +2066,13 @@ def register_callbacks(app: Dash) -> None:
         Output("modeling-model-io-status", "children", allow_duplicate=True),
         Input("model-save-button", "n_clicks"),
         State("model-artifact-store", "data"),
+        State("model-save-filename-input", "value"),
         prevent_initial_call=True,
     )
     def save_trained_model(
         _n_clicks: int | None,
         model_store: dict[str, Any] | None,
+        requested_filename: str | None,
     ) -> tuple[Any, str]:
         artifact = _get_model_artifact_from_store(model_store)
         if not artifact:
@@ -1931,7 +2091,7 @@ def register_callbacks(app: Dash) -> None:
         buf.seek(0)
         meta = artifact.get("meta", {}) if isinstance(artifact, dict) else {}
         model_name = str(meta.get("model_key") or "model")
-        filename = f"insighta_{model_name}.joblib"
+        filename = f"{_sanitize_download_stem(requested_filename, f'insighta_{model_name}')}.joblib"
         return dcc.send_bytes(buf.getvalue(), filename), f"学習済みモデルを保存しました: {filename}"
 
     @app.callback(
@@ -1990,6 +2150,7 @@ def register_callbacks(app: Dash) -> None:
         State("selected-ids-store", "data"),
         State("data-table", "filter_query"),
         State("data-table", "sort_by"),
+        State("export-table-filename-input", "value"),
         prevent_initial_call=True,
     )
     def export_processed_table(
@@ -2000,6 +2161,7 @@ def register_callbacks(app: Dash) -> None:
         selected_ids: list[str] | None,
         table_filter_query: str | None,
         table_sort_by: list[dict[str, Any]] | None,
+        requested_filename: str | None,
     ) -> tuple[Any, str]:
         trigger = callback_context.triggered_id
         if not current_data or not has_current_dataset(current_data):
@@ -2021,17 +2183,20 @@ def register_callbacks(app: Dash) -> None:
             safe_stem = safe_stem.rsplit(".", 1)[0]
         if not safe_stem:
             safe_stem = "insighta_data"
+        download_stem = _sanitize_download_stem(requested_filename, f"{safe_stem}_processed")
 
         if trigger == "export-table-csv-button":
+            filename = f"{download_stem}.csv"
             return (
-                dcc.send_data_frame(df.to_csv, f"{safe_stem}_processed.csv", index=False, encoding="utf-8-sig"),
-                f"CSVを出力しました: {len(df)} 行",
+                dcc.send_data_frame(df.to_csv, filename, index=False, encoding="utf-8-sig"),
+                f"CSVを出力しました: {filename} ({len(df)} 行)",
             )
         if trigger == "export-table-xlsx-button":
+            filename = f"{download_stem}.xlsx"
             try:
                 return (
-                    dcc.send_data_frame(df.to_excel, f"{safe_stem}_processed.xlsx", index=False, sheet_name="data"),
-                    f"Excelを出力しました: {len(df)} 行",
+                    dcc.send_data_frame(df.to_excel, filename, index=False, sheet_name="data"),
+                    f"Excelを出力しました: {filename} ({len(df)} 行)",
                 )
             except ImportError as exc:
                 return no_update, f"Excel出力に必要なライブラリが不足しています: {exc}"
@@ -2246,7 +2411,7 @@ def register_callbacks(app: Dash) -> None:
                 empty_figure("データを読み込むとヒストグラムを表示できます。"),
                 empty_figure("データを読み込むと箱ひげ図を表示できます。"),
                 empty_figure("データを読み込むと散布図行列を表示できます。"),
-                html.Div("CSV/ExcelアップロードまたはSQL実行でデータを読み込んでください。"),
+                html.Div("CSVまたはExcelファイルをアップロードするか、SQLまたはPI Systemのデータベースに接続してデータを取得してください。"),
                 [],
                 _ranking_columns(),
                 html.Div(),
@@ -2291,7 +2456,15 @@ def register_callbacks(app: Dash) -> None:
                     lambda value: "" if pd.isna(value) else f"{value:.4g}"
                 )
         ranking_data = ranking_display.to_dict("records")
-        modeling_summary = _build_modeling_summary(modeling_meta)
+        requested_split_method = normalize_split_method(config.get("split_method"))
+        effective_split_method = _effective_model_split_method(config)
+        modeling_summary = _build_modeling_summary(
+            modeling_meta,
+            standardize_enabled=bool(config.get("apply_standardize", True)),
+            effective_split_method=effective_split_method,
+            temporal_split_forced=(effective_split_method != requested_split_method),
+            stl_visible_only=_has_config_text(config.get("stl_config_text")),
+        )
 
         if ranking_message:
             selection_message = ranking_message

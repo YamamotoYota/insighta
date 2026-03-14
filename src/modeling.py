@@ -49,7 +49,7 @@ def parse_lag_config_text(
     """Parse lag configuration text.
 
     Format:
-        column_name: 1,-1,2
+        column_name: 1,2
     """
     if not text:
         return [], []
@@ -83,6 +83,11 @@ def parse_lag_config_text(
                 continue
             if lag == 0:
                 warnings.append(f"ラグ設定 {line_no}行目: 0 は無視されます。")
+                continue
+            if lag < 0:
+                warnings.append(
+                    f"ラグ設定 {line_no}行目: 未来値を使う負のラグ '{lag}' は予測性能評価で情報リークになるため無視します。"
+                )
                 continue
             if lag not in lags:
                 lags.append(lag)
@@ -584,7 +589,7 @@ def split_train_test_indices(
             sorted_index = df.sort_values(order_col, kind="mergesort").index
         else:
             if order_col:
-                warnings.append(f"前後分割: 列 '{order_col}' が見つからないため現在順序を使用します。")
+                warnings.append(f"時系列順の分割: 列 '{order_col}' が見つからないため現在順序を使用します。")
             sorted_index = df.index
         train_idx = sorted_index[:train_size]
         test_idx = sorted_index[train_size:]
